@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=XPWm Luna Blue
+Comment=Windows XP Luna controls for the XPWm session
+[X-GNOME-Metatheme]
+GtkTheme=XPWm-Luna
+MetacityTheme=XPWm-Luna
+IconTheme=Adwaita
+CursorTheme=Adwaita

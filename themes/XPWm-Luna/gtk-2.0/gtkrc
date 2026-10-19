@@ -1,0 +1,37 @@
+gtk-theme-name = "XPWm-Luna"
+gtk-font-name = "Tahoma 8"
+gtk-button-images = 1
+gtk-menu-images = 1
+gtk-enable-animations = 0
+style "xp-default" {
+  font_name = "Tahoma 8"
+  xthickness = 2
+  ythickness = 2
+  bg[NORMAL] = "#ece9d8"
+  bg[PRELIGHT] = "#f5edca"
+  bg[ACTIVE] = "#d5d2c4"
+  bg[INSENSITIVE] = "#ece9d8"
+  base[NORMAL] = "#ffffff"
+  base[SELECTED] = "#316ac5"
+  base[ACTIVE] = "#316ac5"
+  base[INSENSITIVE] = "#ece9d8"
+  fg[NORMAL] = "#000000"
+  fg[PRELIGHT] = "#000000"
+  fg[ACTIVE] = "#000000"
+  fg[SELECTED] = "#ffffff"
+  fg[INSENSITIVE] = "#aca899"
+  text[NORMAL] = "#000000"
+  text[SELECTED] = "#ffffff"
+  text[ACTIVE] = "#ffffff"
+  text[INSENSITIVE] = "#aca899"
+  GtkWidget::focus-line-width = 1
+  GtkWidget::focus-padding = 1
+  GtkButton::default-border = {0,0,0,0}
+  GtkScrollbar::slider-width = 15
+  GtkScrollbar::min-slider-length = 22
+  GtkCheckButton::indicator-size = 13
+  GtkCheckButton::indicator-spacing = 3
+  GtkMenu::horizontal-padding = 2
+  GtkMenu::vertical-padding = 2
+}
+class "GtkWidget" style "xp-default"

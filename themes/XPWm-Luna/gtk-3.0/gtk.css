@@ -1,0 +1,91 @@
+/* Source-only fallback. prepare_app_theme.py adds private XP resource images. */
+@define-color theme_bg_color #ece9d8;
+@define-color theme_fg_color #000000;
+@define-color theme_base_color #ffffff;
+@define-color theme_text_color #000000;
+@define-color theme_selected_bg_color #316ac5;
+@define-color theme_selected_fg_color #ffffff;
+@define-color insensitive_fg_color #aca899;
+@define-color borders #7f9db9;
+* { border-image:none; font-family: Tahoma, sans-serif; font-size: 8pt; font-style:normal; font-weight:normal; border-radius:0; box-shadow:none; text-shadow:none; -gtk-icon-shadow:none; transition:none; }
+window, dialog, .background { background-color:@theme_bg_color; color:@theme_fg_color; }
+label { color:inherit; }
+*:disabled { color:@insensitive_fg_color; }
+selection, *:selected { background-color:@theme_selected_bg_color; color:@theme_selected_fg_color; }
+button { color:#000; background-image:linear-gradient(to bottom,#fff,#ecebe5 50%,#d6d0c0); background-color:#ece9d8; border:1px solid #003c74; border-radius:3px; padding:2px 8px; min-height:17px; outline-offset:-4px; }
+button:hover { border-color:#e3a431; background-image:linear-gradient(to bottom,#fff,#f5edca); }
+button:active, button:checked { background-image:linear-gradient(to bottom,#d5d2c4,#e9e7df); }
+button:disabled { color:#aca899; background-image:none; background-color:#f5f4ea; border-color:#c9c7ba; }
+button:focus { outline:1px dotted #000; }
+button.default { border-color:#316ac5; }
+entry, spinbutton { color:#000; background:#fff; border:1px solid #7f9db9; padding:2px 3px; min-height:17px; caret-color:#000; }
+entry:disabled { background:#ece9d8; color:#aca899; }
+entry:focus { border-color:#4a72a5; }
+combobox button { background:#fff; padding:0 3px; border:1px solid #7f9db9; min-height:21px; }
+combobox arrow { min-width:15px; min-height:19px; color:#4d6185; }
+checkbutton, radiobutton { padding:3px 0; }
+checkbutton check, radiobutton radio { min-width:13px; min-height:13px; margin-right:5px; background:#fff; border:1px solid #1c5180; }
+radiobutton radio { border-radius:50%; }
+checkbutton check:checked, radiobutton radio:checked { color:#21a121; -gtk-icon-source:-gtk-icontheme("object-select-symbolic"); }
+checkbutton check:hover, radiobutton radio:hover { border-color:#e9ad42; }
+checkbutton check:disabled, radiobutton radio:disabled { background:#ece9d8; border-color:#cac8bb; }
+notebook > header { background:transparent; border:0; padding:0; }
+notebook > header tabs { padding:0; }
+notebook > header tab { min-height:15px; background:linear-gradient(#fff,#ece9d8); border:1px solid #919b9c; border-bottom:0; border-radius:3px 3px 0 0; margin:2px 0 0; padding:3px 8px; }
+notebook > header tab:checked { background:#fcfcfe; border-top:3px solid #ffc73c; margin-top:0; padding-top:2px; }
+notebook > stack { background:#fcfcfe; border:1px solid #919b9c; padding:8px; }
+frame > border { border:1px solid #d0d0bf; border-radius:3px; }
+frame > label { color:#0046d5; }
+separator { background-color:#aca899; min-width:1px; min-height:1px; margin:2px; }
+menubar { background:#ece9d8; color:#000; padding:1px; }
+menubar > menuitem { padding:3px 8px; }
+menu { background:#fff; border:1px solid #aca899; padding:2px; color:#000; }
+menuitem { padding:3px 18px 3px 6px; min-height:15px; }
+menuitem:hover { background:#316ac5; color:white; }
+menu separator { background:#aca899; min-height:1px; margin:3px 1px; }
+toolbar { background:#ece9d8; border-bottom:1px solid #d8d2bd; padding:3px; }
+toolbar button.flat, button.flat { border-color:transparent; background:transparent; }
+toolbar button.flat:hover, button.flat:hover { border-color:#cecec3; background:#f7f5ed; }
+scrollbar { background:#f1efe2; -GtkScrollbar-has-backward-stepper:true; -GtkScrollbar-has-forward-stepper:true; }
+scrollbar.vertical { min-width:17px; }
+scrollbar.horizontal { min-height:17px; }
+scrollbar slider { min-width:13px; min-height:13px; border:1px solid #94b2e8; background:linear-gradient(to right,#e3edff,#bad0f4); border-radius:2px; }
+scrollbar slider:hover { background:#c5dbfc; }
+scrollbar slider:active { background:#91b2eb; }
+scrollbar.vertical slider { min-height:22px; }
+scrollbar.horizontal slider { min-width:22px; }
+scrollbar trough { background:#f3f1e6; min-width:15px; min-height:15px; }
+scrollbar button { min-width:15px; min-height:15px; padding:0; border:1px solid #94b2e8; }
+scale { padding:6px; }
+scale highlight { background:transparent; border:0; }
+scale trough { min-height:2px; min-width:2px; border:1px solid #9d9c99; background:#f1efe2; }
+scale slider { min-width:10px; min-height:20px; background:linear-gradient(to bottom,#fff,#c5ddfa); border:1px solid #5a79a4; border-radius:2px; }
+scale.vertical slider { min-width:20px; min-height:10px; }
+progressbar trough { background:#fff; border:1px solid #686868; min-height:16px; border-radius:3px; }
+progressbar progress { background:repeating-linear-gradient(to right,#22b822 0px,#7be453 6px,#fff 7px,#fff 9px); min-height:14px; }
+treeview.view, textview text, iconview.view, .view { background:#fff; color:#000; }
+treeview header button { border:1px solid #d4d0c8; border-radius:0; background:#ece9d8; padding:2px 6px; }
+treeview.view:selected, iconview.view:selected, row:selected { background:#316ac5; color:#fff; }
+row { padding:2px; }
+list, listbox { background:#fff; color:#000; }
+tooltip, tooltip.background { background:#ffffe1; color:#000; border:1px solid #000; padding:3px; }
+statusbar { background:#ece9d8; padding:2px; }
+headerbar { min-height:26px; background:linear-gradient(#3997ff,#0055e5 30%,#0050d6); color:#fff; border:1px solid #003caa; padding:2px 4px; }
+headerbar .title { font-family:"Trebuchet MS",Tahoma; font-weight:bold; font-size:10pt; }
+headerbar button { min-height:17px; padding:1px 4px; }
+popover { background:#ece9d8; color:#000; border:1px solid #7f9db9; }
+switch trough { background:#fff; border:1px solid #7f9db9; }
+switch:checked { background:#316ac5; color:#fff; }
+
+/* Explicit glyphs and resets keep imported host themes out of control interiors. */
+combobox arrow { -gtk-icon-source:url("assets/arrow-down.svg"); -gtk-icon-transform:none; }
+scrollbar.vertical button { -gtk-icon-source:url("assets/arrow-up.svg"); }
+scrollbar.vertical button.down { -gtk-icon-source:url("assets/arrow-down.svg"); }
+scrollbar.horizontal button { -gtk-icon-source:url("assets/arrow-left.svg"); }
+scrollbar.horizontal button.right { -gtk-icon-source:url("assets/arrow-right.svg"); }
+scale trough { border-image:none; background-image:none; }
+
+scale.horizontal slider { margin:-10px 0; }
+
+/* Terminal tabs surround the console itself, not a padded property page. */
+#xfce4-terminal-notebook > stack { padding:0; border:0; background:#000; }

@@ -1,0 +1,10 @@
+XPWm source code, except where a file carries a more specific notice, is
+licensed under the GNU General Public License, version 3 or later.
+
+The complete GPLv3 license text is included in `compositor/LICENSE`. The
+`compositor/` directory also retains the upstream dwl, dwm, sway, tinywl and
+protocol notices that apply to their respective files.
+
+The Windows XP ISO, Microsoft artwork, fonts, sounds, cursors and extracted
+derivatives are not part of this source distribution. They remain the user's
+private assets and are covered by their original rights holders' terms.
