@@ -23,7 +23,11 @@ The original ISO remains unchanged. ImageMagick is unnecessary for this command.
 The supported reference is Windows XP SP3 x86 media with the standard English
 resource layout; other editions/languages are not guaranteed to import.
 
-Output is under `assets/local/`, with source hashes and provenance ledgers.
+In a source checkout, output is under `assets/local/`. When installed through
+`install.sh`, `xpwm-import-assets YOUR_XP.iso` instead uses
+`$XDG_DATA_HOME/xpwm-private/assets/local` (normally under `~/.local/share`).
+The installed launchers discover that private asset root automatically. Both
+layouts retain source hashes and provenance ledgers.
 `import-report.json` records completed stages, final status and the ISO hash on
 success. An error stops the pipeline and preserves partial output for diagnosis.
 Existing asset directories or import reports are refused; there is no automatic

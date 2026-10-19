@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -110,8 +111,9 @@ def import_iso(iso, output):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('iso', type=Path, help='Local Windows XP SP3 x86 ISO; never downloaded or executed')
-    parser.add_argument('--output', type=Path, default=ROOT,
-                        help='Asset root containing assets/local (default: XPWm project root); existing assets refused')
+    default_output = ROOT if (ROOT / 'Makefile').is_file() else Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'xpwm-private'
+    parser.add_argument('--output', type=Path, default=default_output,
+                        help='Asset root containing assets/local (default: checkout root, or user data/xpwm-private when installed); existing assets refused')
     args = parser.parse_args(argv)
     try:
         import_iso(args.iso, args.output)

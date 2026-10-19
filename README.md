@@ -40,6 +40,74 @@ including original control states, Tahoma and XP folder/document icons. Open
 **Start → All Programs → Settings → Luna Theme Preview** to inspect it. Host theme settings
 are unchanged. See [application theme support and limits](docs/APP_THEME.md).
 
+## Install on Linux
+
+Clone the source and run the installer as your normal user:
+
+```sh
+git clone https://github.com/e10null/XPWm.git
+cd XPWm
+./install.sh --deps
+```
+
+This builds and installs XPWm under `~/.local` and creates `xpwm`,
+`xpwm-theme-preview`, `xpwm-import-assets` and a Wayland session entry. Add
+`~/.local/bin` to your `PATH` if necessary. Start it from a logged-in TTY with
+`~/.local/bin/xpwm tty`, or use `xpwm nested` inside an existing Wayland session.
+It does not replace your current window manager or change your file associations.
+
+`--deps` explicitly requests build/runtime packages through pacman, apt, dnf or
+zypper, using sudo when needed. Package availability varies by distro release;
+**wlroots 0.18.x is required**, and the installer stops if it is unavailable.
+Other distributions can install the build dependencies below manually and run
+`./install.sh` without `--deps`. Python 3.11+ is required. Dependency recipes for
+other distributions are not a claim that they have been tested on real hardware.
+Optional desktop apps and ISO extraction tools are installed separately.
+
+Most display managers only discover system session files. For a system-wide
+installation and login-screen session entry:
+
+```sh
+./install.sh --system --prefix /usr
+```
+
+Builds run as your normal user; sudo is requested for system deployment. The
+compositor installs privately as `/usr/lib/xpwm/compositor/dwl`, preserving any
+separately installed `dwl` executable. Log out and select **XPWm** in your display
+manager. Seat/device access still needs the normal logind or seatd setup for your
+system; the installer does not change groups, services or authentication.
+
+The public installation includes fallback artwork. To use locally extracted XP
+assets, install the [ISO importer requirements](tools/README.md#one-command-iso-import),
+then run:
+
+```sh
+xpwm-import-assets /path/to/windows-xp-sp3-x86.iso
+```
+
+The installed importer defaults to `$XDG_DATA_HOME/xpwm-private` (normally
+`~/.local/share/xpwm-private`). Launchers discover that asset root automatically;
+`XPWM_ASSET_ROOT` can select a different one. Keep existing imports in place or
+use a new `--output` root; overwriting is refused. Imported assets stay separate
+from installed programs and are preserved by upgrades and uninstall.
+
+Useful installer options:
+
+```sh
+./install.sh --dry-run --deps       # Inspect the plan without changing anything
+./install.sh --prefix /custom/path  # Custom absolute install prefix
+./install.sh --no-build             # Install existing binaries
+./install.sh --prefix /usr --destdir /tmp/xpwm-package --no-build
+./install.sh --uninstall            # Remove a user install
+./install.sh --system --prefix /usr --uninstall
+```
+
+For updates, pull new source and rerun the installer with the same prefix. It
+records installed file hashes in `share/xpwm/install-manifest.json`, refuses
+unmanaged or modified files during an update, and preserves modified files during
+uninstall. User settings and private assets are never removed. `--destdir` stages
+files for packaging while launchers retain the requested prefix.
+
 ## Recommended lightweight applications
 
 For a small setup with good Luna compatibility, install individual GTK3 apps.
