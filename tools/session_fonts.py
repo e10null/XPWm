@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Session-local XP font defaults; never modifies host font configuration."""
+import configparser
 import os
 from pathlib import Path
 import sys
@@ -29,5 +30,19 @@ def write_config(fonts, destination):
             temporary.unlink(missing_ok=True)
 
 
+def font_dpi():
+    settings = configparser.ConfigParser(interpolation=None)
+    path = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'xpwm/appearance.ini'
+    try:
+        settings.read(path)
+        dpi = settings.getint('Appearance', 'FontDPI', fallback=96)
+    except (ValueError, configparser.Error):
+        return 96
+    return dpi if dpi in (96, 120, 144) else 96
+
+
 if __name__ == '__main__':
-    write_config(*sys.argv[1:])
+    if sys.argv[1:] == ['--dpi']:
+        print(font_dpi())
+    else:
+        write_config(*sys.argv[1:])

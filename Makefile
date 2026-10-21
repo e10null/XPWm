@@ -6,6 +6,12 @@ clean:
 	$(MAKE) -C compositor clean
 	$(MAKE) -C shell clean
 check: all
+	$(MAKE) -C compositor client-lifetime-test
+	./compositor/client-lifetime-test
+	$(MAKE) -C compositor font-policy-test
+	sh tests/font-policy.sh
+	$(MAKE) -C shell font-settings-test
+	sh tests/font-settings.sh
 	$(MAKE) -C shell night-light-test
 	./shell/night-light-test
 	$(MAKE) -C compositor lock-theme-test

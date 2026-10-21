@@ -427,3 +427,18 @@ with 4000 K at night and 6500 K by day, fading over 30 minutes. The toggle,
 hours, and temperature are saved in `~/.config/xpwm/night-light.ini` and restored
 at login. It uses the compositor gamma-control protocol; nested sessions depend
 on the host compositor/output supporting gamma changes.
+
+Desktop right-click → Properties → Appearance offers Normal (96 DPI), Large
+(120 DPI), and Extra large (144 DPI) font sizes. The choice is saved in
+`~/.config/xpwm/appearance.ini`. GTK 3 applications in the XPWm session, desktop
+labels, taskbar labels and window captions update live; new Qt applications
+inherit the selected font DPI. Existing Qt applications may need reopening.
+Fixed XP logo/Welcome artwork retains its original metrics. This adjusts text
+rather than screen resolution. For larger icons and the whole interface, use
+the separate Settings → Display scaling control.
+
+TTY and nested sessions retain private diagnostics in
+`~/.local/state/xpwm/session.log` (or `$XDG_STATE_HOME/xpwm/session.log`).
+The previous login's log is kept as `session.previous.log`. These files can
+contain application diagnostics and are restricted to your user; review them
+before sharing.

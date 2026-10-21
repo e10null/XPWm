@@ -10,6 +10,7 @@
 #include "display-settings.h"
 #include "screensaver-settings.h"
 #include "night-light.h"
+#include "appearance-settings.h"
 #include "../shared/sounds.h"
 
 typedef struct {
@@ -19,7 +20,7 @@ typedef struct {
 	int x, y;
 	gboolean selected;
  GFile *file; GdkPixbuf *pixbuf; guint64 size, modified; gboolean positioned;
- cairo_surface_t *rendered; gboolean rendered_selected; double rendered_scale_x, rendered_scale_y;
+ cairo_surface_t *rendered; gboolean rendered_selected; double rendered_scale_x, rendered_scale_y; int rendered_dpi;
 } DesktopIcon;
 
 static GtkWidget *window, *canvas;
@@ -245,7 +246,7 @@ static void draw_label(cairo_t *cr, const DesktopIcon *icon)
 {
 	PangoLayout *layout = pango_cairo_create_layout(cr);
 	PangoFontDescription *font = pango_font_description_from_string("Tahoma 8");
-	pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
+	pango_cairo_context_set_resolution(pango_layout_get_context(layout), xp_font_dpi());
 	pango_layout_set_font_description(layout, font); pango_layout_set_text(layout, icon->label, -1);
 	pango_layout_set_width(layout, 76 * PANGO_SCALE); pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
 	pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
@@ -276,14 +277,14 @@ static void paint_icon(cairo_t *cr, DesktopIcon *icon)
 {
  double sx, sy;
  cairo_surface_get_device_scale(cairo_get_target(cr), &sx, &sy);
- if (!icon->rendered || icon->rendered_selected != icon->selected || icon->rendered_scale_x != sx || icon->rendered_scale_y != sy) {
+ if (!icon->rendered || icon->rendered_dpi!=xp_font_dpi() || icon->rendered_selected != icon->selected || icon->rendered_scale_x != sx || icon->rendered_scale_y != sy) {
   if (icon->rendered) cairo_surface_destroy(icon->rendered);
   icon->rendered = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ceil(84*sx), ceil(80*sy));
   cairo_surface_set_device_scale(icon->rendered, sx, sy);
   cairo_t *tile = cairo_create(icon->rendered);
   DesktopIcon local = *icon; local.x = local.y = 2;
   draw_icon(tile, &local); draw_label(tile, &local); cairo_destroy(tile);
-  icon->rendered_selected = icon->selected; icon->rendered_scale_x = sx; icon->rendered_scale_y = sy;
+  icon->rendered_dpi=xp_font_dpi(); icon->rendered_selected = icon->selected; icon->rendered_scale_x = sx; icon->rendered_scale_y = sy;
  }
  cairo_set_source_surface(cr, icon->rendered, icon->x-2, icon->y-2); cairo_paint(cr);
 }
@@ -378,6 +379,8 @@ static void apply_wallpaper(gint response_id)
  if (!properties_window) return;
  GtkWidget *saver = g_object_get_data(G_OBJECT(properties_window), "screensaver-page");
  GError *error = NULL;
+ GtkWidget *appearance=g_object_get_data(G_OBJECT(properties_window),"appearance-page");
+ if(appearance && appearance_dirty(appearance) && !xp_font_dpi_save(appearance_dpi(appearance),&error)){error_dialog("Unable to save font settings",error);return;}
  GtkWidget *night = g_object_get_data(G_OBJECT(properties_window), "night-light-page");
  if (night && night_dirty(night) && !night_apply(night, &error)) { error_dialog("Unable to apply Night Light", error); return; }
  if (saver && !xp_saver_settings_apply(saver, &error)) { error_dialog("Unable to save screen saver settings", error); return; }
@@ -402,6 +405,8 @@ static void display_changed(gpointer data)
   gboolean pending = settings && xp_display_settings_dirty(settings);
   GtkWidget *saver = g_object_get_data(G_OBJECT(properties_window), "screensaver-page");
   if (saver) pending |= xp_saver_settings_dirty(saver);
+  GtkWidget *appearance=g_object_get_data(G_OBJECT(properties_window),"appearance-page");
+  if(appearance)pending |= appearance_dirty(appearance);
   GtkWidget *night = g_object_get_data(G_OBJECT(properties_window), "night-light-page");
   if (night) pending |= night_dirty(night);
   if (combo) pending |= gtk_combo_box_get_active(GTK_COMBO_BOX(combo)) != wall_mode;
@@ -466,6 +471,9 @@ static void properties(GtkMenuItem *item, gpointer data)
  g_object_set_data(G_OBJECT(properties_window), "screensaver-page", saver);
  gtk_notebook_append_page(GTK_NOTEBOOK(notebook), settings, gtk_label_new("Settings"));
  g_object_set_data(G_OBJECT(properties_window), "display-settings-page", settings);
+ GtkWidget *appearance=appearance_page(properties_window);
+ gtk_notebook_append_page(GTK_NOTEBOOK(notebook),appearance,gtk_label_new("Appearance"));
+ g_object_set_data(G_OBJECT(properties_window),"appearance-page",appearance);
  GtkWidget *night = night_page(properties_window);
  gtk_notebook_append_page(GTK_NOTEBOOK(notebook), night, gtk_label_new("Night Light"));
  g_object_set_data(G_OBJECT(properties_window), "night-light-page", night);
@@ -641,6 +649,11 @@ static gboolean test_ready(gpointer data)
 
 #include "desktop-input-test.h"
 
+static gboolean font_redraw(gpointer data) {
+ static int previous=96;int dpi=xp_font_dpi();
+ if(dpi!=previous){previous=dpi;gtk_widget_queue_draw(canvas);}return G_SOURCE_CONTINUE;
+}
+
 int main(int argc, char **argv)
 {
 	luna_init();
@@ -672,6 +685,7 @@ int main(int argc, char **argv)
  }
 	if (g_getenv("XPWM_DESKTOP_TEST")) g_timeout_add(350, test_ready, NULL);
  if (g_getenv("XPWM_LAYOUT_RESTART_TEST")) g_timeout_add(150, layout_restart_test, NULL);
+ g_timeout_add(500,font_redraw,NULL);
  night_start();
 	gtk_main();
  night_stop();

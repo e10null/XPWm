@@ -1,3 +1,4 @@
+#include "font-settings.h"
 /* Session-local GTK3 module: keep the host's gtk.css from repainting Luna.
  * Loaded through GTK3_MODULES, so GTK2 applications never load a GTK3 library. */
 #include <gtk/gtk.h>
@@ -43,16 +44,17 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
 		GTK_STYLE_PROVIDER_PRIORITY_USER + 1);
 	/* CSS alone leaves GtkSettings (and widgets deriving their own fonts) on
 	 * the host desktop's font. Keep XP metrics and standard grayscale smoothing
-	 * local to this session. Match the compositor's 96-DPI font metrics; monitor
-	 * scaling still applies separately. */
+	 * local to this session. Use the saved font DPI consistently with compositor
+	 * captions; monitor scaling still applies separately. */
 	g_object_set(gtk_settings_get_default(),
 		"gtk-font-name", "Tahoma 8",
-  "gtk-xft-dpi", 96 * 1024,
+  "gtk-xft-dpi", xp_font_dpi()*1024,
 		"gtk-xft-antialias", 1, "gtk-xft-hinting", 1,
 		"gtk-xft-hintstyle", "hintfull", "gtk-xft-rgba", "none",
 		"gtk-enable-animations", FALSE,
 		"gtk-decoration-layout", "",
 		"gtk-button-images", TRUE, "gtk-menu-images", TRUE, NULL);
+	xp_font_settings_watch(gtk_settings_get_default());
 	g_signal_connect(gtk_settings_get_default(),"notify::gtk-font-name",G_CALLBACK(keep_xp_ui_font),NULL);
 	if (icons && *icons) g_object_set(gtk_settings_get_default(), "gtk-icon-theme-name", icons, NULL);
 	g_object_unref(provider);

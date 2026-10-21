@@ -72,6 +72,7 @@
 
 #include "util.h"
 #include "decoration.h"
+#include "../shared/font-settings.h"
 
 /* macros */
 #ifndef MAX
@@ -801,6 +802,14 @@ reloadfocussettings(void)
 static int
 focussettingstick(void *data)
 {
+ static int previous_dpi=0;
+ int dpi=xp_font_dpi();
+ Client *c;
+ if(dpi!=previous_dpi){
+  char value[16];snprintf(value,sizeof value,"%d",dpi);setenv("QT_FONT_DPI",value,1);
+  wl_list_for_each(c,&clients,link)drawcaption(c);
+  previous_dpi=dpi;
+ }
 	(void)data;
 	reloadfocussettings();
 	screensaver_tick();
@@ -1455,6 +1464,10 @@ destroynotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the xdg_toplevel is destroyed. */
 	Client *c = wl_container_of(listener, c, destroy);
+	/* Decoration resources may outlive the toplevel. Their listeners live in
+	 * Client, so detach them before freeing it, regardless of destroy order. */
+	if (c->decoration)
+		destroydecoration(&c->destroy_decoration, NULL);
 	wl_list_remove(&c->destroy.link);
 	wl_list_remove(&c->set_title.link);
 	wl_list_remove(&c->fullscreen.link);

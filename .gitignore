@@ -114,3 +114,8 @@ __pycache__/
 /.tools/
 /.netrc
 /.npmrc
+
+/shell/font-settings-test
+
+/compositor/font-policy-test
+/compositor/client-lifetime-test

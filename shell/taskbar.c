@@ -1,3 +1,4 @@
+#include "../shared/font-settings.h"
 /* Native Wayland taskbar. Temporary original Luna-style Cairo artwork. */
 #include <gtk/gtk.h>
 #include <gdk/gdkwayland.h>
@@ -155,7 +156,7 @@ static const struct wl_registry_listener registry_listener = {global, removed};
 static void text(cairo_t *cr, const char *s, int x, int y, int width, const char *font)
 {
 	PangoLayout *layout = pango_cairo_create_layout(cr);
-	pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
+	pango_cairo_context_set_resolution(pango_layout_get_context(layout), xp_font_dpi());
 	PangoFontDescription *desc = pango_font_description_from_string(font);
 	pango_layout_set_font_description(layout, desc);
 	pango_layout_set_text(layout, s, -1);
@@ -322,7 +323,7 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 		PangoLayout *layout = pango_cairo_create_layout(cr);
 		PangoFontDescription *font = pango_font_description_from_string("Tahoma 8");
 		int cw, ch, clock_x = width-xp_tray_width()+xp_tray_clock_x();
-		pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
+		pango_cairo_context_set_resolution(pango_layout_get_context(layout), xp_font_dpi());
 		pango_layout_set_font_description(layout, font);
 		pango_layout_set_text(layout, clock, -1);
 		pango_layout_get_pixel_size(layout, &cw, &ch);

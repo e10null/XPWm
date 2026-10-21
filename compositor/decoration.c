@@ -1,3 +1,4 @@
+#include "../shared/font-settings.h"
 /* Local Luna resources when available; recreated drawing remains the fallback. */
 #include <stdlib.h>
 #include <stdint.h>
@@ -53,7 +54,7 @@ xp_caption_buffer(int width, const char *title, int active, int maximized,
 	cairo_pattern_t *gradient;
 	PangoLayout *layout;
 	PangoFontDescription *font;
-	int i, x, themed, state, total_width = width;
+	int i, x, themed, state, title_height, title_y, total_width = width;
 	double shade;
 	if (!b)
 		return NULL;
@@ -86,19 +87,21 @@ xp_caption_buffer(int width, const char *title, int active, int maximized,
 		cairo_fill(cr);
 	}
 	layout = pango_cairo_create_layout(cr);
-	pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
+	pango_cairo_context_set_resolution(pango_layout_get_context(layout), xp_font_dpi());
 	font = pango_font_description_from_string(themed ? "Trebuchet MS Bold 10" : "Tahoma Bold 10");
 	pango_layout_set_font_description(layout, font);
 	pango_layout_set_text(layout, title ? title : "", -1);
 	pango_layout_set_single_paragraph_mode(layout, TRUE);
 	pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 	pango_layout_set_width(layout, MAX(0, width - 31 - 3 * (XP_BUTTON + XP_GAP)) * PANGO_SCALE);
-	if (active && themed) {
-		cairo_move_to(cr, 27, 6);
+	pango_layout_get_pixel_size(layout,NULL,&title_height);
+ title_y=xp_font_dpi()==96 ? 5 : MAX(0,(XP_CAPTION-title_height)/2);
+ if (active && themed) {
+		cairo_move_to(cr, 27, title_y+1);
 		cairo_set_source_rgb(cr, 10 / 255.0, 24 / 255.0, 131 / 255.0);
 		pango_cairo_show_layout(cr, layout);
 	}
-	cairo_move_to(cr, 26, 5);
+	cairo_move_to(cr, 26, title_y);
 	if (active) cairo_set_source_rgb(cr, 1, 1, 1);
 	else cairo_set_source_rgb(cr, 216 / 255.0, 228 / 255.0, 248 / 255.0);
 	pango_cairo_show_layout(cr, layout);
@@ -196,7 +199,7 @@ xp_switcher_buffer(int width, int columns, int count, int selected, const char *
  }
  cairo_set_source_rgb(cr, .55, .55, .55); cairo_set_line_width(cr, 1);
  cairo_rectangle(cr, 9.5, height-32.5, width-19, 23); cairo_stroke(cr);
- layout = pango_cairo_create_layout(cr); pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
+ layout = pango_cairo_create_layout(cr); pango_cairo_context_set_resolution(pango_layout_get_context(layout), xp_font_dpi());
  font = pango_font_description_from_string("Tahoma Bold 8"); pango_layout_set_font_description(layout, font);
  pango_layout_set_text(layout, title ? title : "", -1); pango_layout_set_single_paragraph_mode(layout, TRUE);
  pango_layout_set_width(layout, MAX(1, width-28)*PANGO_SCALE); pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
@@ -214,13 +217,13 @@ xp_system_menu_buffer(int selected, unsigned int enabled)
  cairo_t *cr;
  PangoLayout *layout;
  PangoFontDescription *font;
- int i, y;
+ int i, y, label_height, text_y;
  if (!b) return NULL;
  b->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 180, 132);
  if (cairo_surface_status(b->surface) != CAIRO_STATUS_SUCCESS) { cairo_surface_destroy(b->surface); free(b); return NULL; }
  cr = cairo_create(b->surface); cairo_set_source_rgb(cr, 1, 1, 1); cairo_paint(cr);
  cairo_set_source_rgb(cr, .67, .66, .6); cairo_set_line_width(cr, 1); cairo_rectangle(cr, .5, .5, 179, 131); cairo_stroke(cr);
- layout = pango_cairo_create_layout(cr); pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
+ layout = pango_cairo_create_layout(cr); pango_cairo_context_set_resolution(pango_layout_get_context(layout), xp_font_dpi());
  for (i = 0; i < 6; i++) {
   y = 3 + 20*i + (i == 5 ? 6 : 0);
   if (i == selected && (enabled & (1u << i))) {
@@ -230,10 +233,13 @@ xp_system_menu_buffer(int selected, unsigned int enabled)
   else cairo_set_source_rgb(cr, .67, .66, .6);
   font = pango_font_description_from_string(i == 5 ? "Tahoma Bold 8" : "Tahoma 8");
   pango_layout_set_font_description(layout, font); pango_font_description_free(font);
-  pango_layout_set_text(layout, labels[i], -1); cairo_move_to(cr, 24, y+3); pango_cairo_show_layout(cr, layout);
+  pango_layout_set_text(layout, labels[i], -1);
+  pango_layout_get_pixel_size(layout,NULL,&label_height);
+  text_y=xp_font_dpi()==96 ? y+3 : y+MAX(0,(20-label_height)/2);
+  cairo_move_to(cr, 24, text_y); pango_cairo_show_layout(cr, layout);
   if (i == 5) {
    font = pango_font_description_from_string("Tahoma 8"); pango_layout_set_font_description(layout, font); pango_font_description_free(font);
-   pango_layout_set_text(layout, "Alt+F4", -1); cairo_move_to(cr, 125, y+3); pango_cairo_show_layout(cr, layout);
+   pango_layout_set_text(layout, "Alt+F4", -1); cairo_move_to(cr, 125, text_y); pango_cairo_show_layout(cr, layout);
   }
  }
  cairo_set_source_rgb(cr, .67, .66, .6); cairo_rectangle(cr, 4, 105, 172, 1); cairo_fill(cr);

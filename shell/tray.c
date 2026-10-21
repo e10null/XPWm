@@ -1,3 +1,4 @@
+#include "../shared/font-settings.h"
 /* XP notification-area controls. All service calls run off the GTK event loop. */
 #include "tray.h"
 #include "xp-style.h"
@@ -9,7 +10,8 @@
 #include <gdk/gdkwayland.h>
 #include <wayland-client.h>
 
-enum { SLOT = 22, CLOCK = 58, TRAY_LEFT = 19, TRAY_RIGHT = 7 };
+enum { SLOT = 22, TRAY_LEFT = 19, TRAY_RIGHT = 7 };
+#define CLOCK (58*xp_font_dpi()/96)
 static gboolean clock_visible = TRUE;
 static GtkWidget *tray_canvas, *volume_window, *network_window, *date_window, *power_window;
 static GtkWidget *volume_scale, *mute_check, *network_status, *wifi_check, *date_label, *power_label;

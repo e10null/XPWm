@@ -1,3 +1,4 @@
+#include "font-settings.h"
 /* Native GTK interaction, original Luna button pixels and XP control metrics. */
 #include "xp-style.h"
 #include "../shared/luna.h"
@@ -34,7 +35,8 @@ static void style_tree(GtkWidget *widget, gpointer data)
 
 void xp_style_apply(GtkWidget *root)
 {
- g_object_set(gtk_widget_get_settings(root),"gtk-font-name","Tahoma 8","gtk-xft-dpi",96*1024,NULL);
+ g_object_set(gtk_widget_get_settings(root),"gtk-font-name","Tahoma 8","gtk-xft-dpi",xp_font_dpi()*1024,NULL);
+	xp_font_settings_watch(gtk_widget_get_settings(root));
 	static GtkCssProvider *provider;
 	if (!provider) {
 		provider = gtk_css_provider_new();

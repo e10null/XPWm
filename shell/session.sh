@@ -5,6 +5,10 @@ project_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$project_root"
 XPWM_PROJECT_ROOT="$project_root"
 . "$project_root/tools/session-theme.sh"
+# D-Bus activated browser/keyring dialogs need the live Wayland environment.
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    dbus-update-activation-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP XDG_SESSION_TYPE || true
+fi
 # Optional platform integration runs before desktop services and logon sounds.
 for session_hook in "$project_root"/platforms/*/session.sh; do
     [ -f "$session_hook" ] || continue

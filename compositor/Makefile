@@ -17,6 +17,8 @@ DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CF
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` -lm $(LIBS)
 
 all: dwl
+client-lifetime-test: dwl.o util.o decoration.o luna.o ../tests/client-lifetime.c
+	$(CC) $(DWLCFLAGS) ../tests/client-lifetime.c util.o decoration.o luna.o $(LDFLAGS) $(LDLIBS) -o $@
 screensaver-test: dwl.o util.o decoration.o luna.o ../tests/screensaver.c
 	$(CC) $(DWLCFLAGS) ../tests/screensaver.c util.o decoration.o luna.o $(LDFLAGS) $(LDLIBS) -o $@
 start-key-test: dwl.o util.o decoration.o luna.o ../tests/start-key.c
@@ -72,7 +74,8 @@ xdg-shell-protocol.h:
 config.h:
 	cp config.def.h $@
 clean:
-	rm -f lock-theme-test lock-policy-test popup-placement-test screenshot-policy-test screensaver-test
+	rm -f client-lifetime-test
+	rm -f font-policy-test lock-theme-test lock-policy-test popup-placement-test screenshot-policy-test screensaver-test
 	rm -f start-key-test
 	rm -f layout-persistence-test
 	rm -f hover-focus-test
@@ -135,3 +138,8 @@ lock-policy-test: dwl.o util.o decoration.o luna.o ../tests/lock-policy.c
 
 lock-theme-test: dwl.o util.o decoration.o luna.o ../tests/lock-theme.c
 	$(CC) $(DWLCFLAGS) ../tests/lock-theme.c util.o decoration.o luna.o $(LDFLAGS) $(LDLIBS) -o $@
+
+dwl.o decoration.o: ../shared/font-settings.h
+
+font-policy-test: dwl.o util.o decoration.o luna.o ../tests/font-policy.c
+	$(CC) $(DWLCFLAGS) ../tests/font-policy.c util.o decoration.o luna.o $(LDFLAGS) $(LDLIBS) -o $@

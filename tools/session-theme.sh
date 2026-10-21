@@ -7,6 +7,7 @@ if [ ! -f "$xpwm_theme_root/themes/XPWm-Luna/index.theme" ]; then
     return 1
 fi
 export GTK_THEME=XPWm-Luna
+export QT_FONT_DPI="$(python3 "$xpwm_theme_root/tools/session_fonts.py" --dpi)"
 # Ask cooperating GTK/Mozilla clients to use the compositor's Luna frame.
 export GTK_CSD=0
 export MOZ_GTK_TITLEBAR_DECORATION=system

@@ -63,7 +63,7 @@ foreign-protocol.c:
 	wayland-scanner private-code ../compositor/protocols/wlr-foreign-toplevel-management-unstable-v1.xml $@
 clean:
 	rm -rf .lock-build
-	rm -f night-light-test xpwm-lock start-actions-test desktop-popup-test screenshot-test data-control-client.h data-control-protocol.c xpwm-screenshot screencopy-client.h screencopy-protocol.c xpwm-screensaver screensaver-render-test run-suggestions-test run-completion-test
+	rm -f font-settings-test night-light-test xpwm-lock start-actions-test desktop-popup-test screenshot-test data-control-client.h data-control-protocol.c xpwm-screenshot screencopy-client.h screencopy-protocol.c xpwm-screensaver screensaver-render-test run-suggestions-test run-completion-test
 	rm -f layout-client-test desktop-render-test taskbar-groups-test desktop-files-test search-test xpwm-run xpwm-sound xpwm-luna-module.so xpwm-theme-preview xpwm-taskbar xpwm-desktop xpwm-logon xpwm-logoff luna-render-test run-command-test run-history-test run-associations-test start-menu-test notifications-test tray-test *.o foreign-client.h foreign-protocol.c output-client.h output-protocol.c xpwm-displayctl display-settings-test
 .PHONY: all clean
 
@@ -151,3 +151,11 @@ session-screen.o: ../shared/session-art.h
 
 night-light-test: ../tests/night-light.c night-light.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/night-light.c $(LDLIBS) -o $@
+
+desktop.o: appearance-settings.h font-settings.h ../shared/font-settings.h
+xp-style.o: font-settings.h ../shared/font-settings.h
+xpwm-luna-module.so: font-settings.h ../shared/font-settings.h
+taskbar.o tray.o: ../shared/font-settings.h
+
+font-settings-test: ../tests/font-settings.c appearance-settings.h font-settings.h ../shared/font-settings.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/font-settings.c $(LDLIBS) -o $@

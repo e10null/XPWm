@@ -5,7 +5,7 @@
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <assert.h>
 static struct wl_event_source *timer;
-static int phase,attempts,closing;
+static int phase,attempts,closing,cycles;
 static LayerSurface *selector;
 static int selector_count(void)
 {
@@ -21,7 +21,7 @@ static int step(void *data)
  char *path;int count=selector_count();(void)data;if(++attempts>=60){fprintf(stderr,"Screenshot test timed out in phase %d, selectors=%d, cursor=%d\n",phase,count,cursor_mode);abort();}
  switch(phase) {
  case 0:
-  if(count!=2)break;
+  if(count!=2 || wl_list_empty(&clients))break;
   wlr_cursor_warp_closest(cursor,NULL,selector->geom.x+10,selector->geom.y+20);
   motionnotify(1000,NULL,0,0,0,0);buttonpress(NULL,&button);wlr_seat_pointer_notify_frame(seat);phase++;break;
  case 1:
@@ -34,6 +34,12 @@ static int step(void *data)
   if(!g_file_test(path,G_FILE_TEST_EXISTS)){g_free(path);break;}g_free(path);
   assert(++closing<15);if(count || exclusive_focus)break;
   if(!seat->selection_source)break; /* clipboard ownership remains live */
+  {
+   Client *target=wl_container_of(clients.next,target,link);
+   focusclient(target,1);
+   assert(seat->keyboard_state.focused_surface==client_surface(target));
+   motionnotify(1500,NULL,0,0,0,0);
+  }
   spawn(&(Arg)SHCMD("./shell/xpwm-screenshot --area --no-clipboard --output \"$XDG_RUNTIME_DIR/cancel.png\""));phase++;break;
  case 4:
   if(count!=2)break;
@@ -42,7 +48,12 @@ static int step(void *data)
  case 5:
   if(count || exclusive_focus)break;
   path=g_build_filename(g_getenv("XDG_RUNTIME_DIR"),"cancel.png",NULL);assert(!g_file_test(path,G_FILE_TEST_EXISTS));g_free(path);
-  path=g_build_filename(g_getenv("XDG_RUNTIME_DIR"),"policy-passed",NULL);assert(g_file_set_contents(path,"PASS: real crop release unmaps all selectors while clipboard remains available; Escape cancels cleanly\n",-1,NULL));g_free(path);
+  if(++cycles<3) {
+   path=g_build_filename(g_getenv("XDG_RUNTIME_DIR"),"area.png",NULL);unlink(path);g_free(path);
+   phase=attempts=closing=0;
+   spawn(&(Arg)SHCMD("./shell/xpwm-screenshot --area --output \"$XDG_RUNTIME_DIR/area.png\""));break;
+  }
+  path=g_build_filename(g_getenv("XDG_RUNTIME_DIR"),"policy-passed",NULL);assert(g_file_set_contents(path,"PASS: repeated crop, application refocus with live clipboard, and Escape cancellation\n",-1,NULL));g_free(path);
   phase++;wl_display_terminate(dpy);return 0;
  }
  wl_event_source_timer_update(timer,100);return 0;
@@ -50,6 +61,7 @@ static int step(void *data)
 int main(void)
 {
  setup();wlr_seat_set_capabilities(seat,WL_SEAT_CAPABILITY_POINTER|WL_SEAT_CAPABILITY_KEYBOARD);
+ spawn(&(Arg)SHCMD("foot --title=Screenshot-focus-test"));
  timer=wl_event_loop_add_timer(event_loop,step,NULL);wl_event_source_timer_update(timer,100);
  run("./shell/xpwm-screenshot --area --output \"$XDG_RUNTIME_DIR/area.png\"");assert(phase==6);
  wl_event_source_remove(timer);cleanup();return 0;
