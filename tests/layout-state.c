@@ -38,8 +38,15 @@ static void checktiles(void)
 {
  Client *c, *other;
  struct wlr_box overlap;
+ int tiled_count=0, first_width=0;
+ wl_list_for_each(c, &clients, link)
+  if (!c->isfloating && !c->isfullscreen) tiled_count++;
  wl_list_for_each(c, &clients, link) {
   if (c->isfloating || c->isfullscreen) continue;
+  if (tiled_count==2) {
+   if (first_width) assert(abs(c->geom.width-first_width)<=1);
+   else first_width=c->geom.width;
+  }
   assert(c->scene->node.parent == layers[LyrTile]);
   assert(c->geom.x >= c->mon->w.x && c->geom.y >= c->mon->w.y);
   assert(c->geom.x+c->geom.width <= c->mon->w.x+c->mon->w.width);
@@ -57,8 +64,9 @@ static void checktiles(void)
 static int step(void *data)
 {
  Client *c;
+ struct wlr_pointer_button_event edge={.button=BTN_LEFT,.state=WL_POINTER_BUTTON_STATE_PRESSED,.time_msec=10000};
  (void)data;
- assert(++attempts < 240);
+ if (++attempts >= 240) { fprintf(stderr,"Layout test timed out in phase %d\n",phase); abort(); }
  wl_list_for_each(c, &clients, link) {
   const char *title = client_get_title(c), *app = client_get_appid(c);
   if (title && !strcmp(title, "XPWm layout hints")) hints = c;
@@ -99,11 +107,65 @@ static int step(void *data)
   assert(wlr_box_equal(&saved, &c->geom));
   delay = 0; break;
  case 5:
+  c=browser ? browser : terminal;
+  cursor_mode=CurResize;grabc=c;
+  xpallfloat(&(Arg){0});
+  assert(c->mon->lt[c->mon->sellt]->arrange);
+  assert(cursor_mode==CurNormal && !grabc);
+  delay=0;break;
+ case 6:
+  c=browser ? browser : terminal;
+  saved=c->geom;focusclient(c,1);
+  assert(!client_manual_geometry(c));
+  assert(!(system_enabled(c)&((1u<<1)|(1u<<2))));
+  xpgeometry(&(Arg){.i=0});togglefloating(&(Arg){0});
+  assert(!c->isfloating && wlr_box_equal(&saved,&c->geom));
+  wlr_cursor_warp_closest(cursor,NULL,c->geom.x+40,c->geom.y+c->bw+12);
+  moveresize(&(Arg){.ui=CurMove});assert(cursor_mode==CurNormal);
+  moveresize(&(Arg){.ui=CurResize});assert(cursor_mode==CurNormal);
+  wlr_cursor_warp_closest(cursor,NULL,c->geom.x,c->geom.y+c->geom.height/2);
+  assert(decorationpress(c,&edge));assert(cursor_mode==CurNormal && !c->isfloating);
+  assert(wlr_box_equal(&saved,&c->geom));
+  saved=c->geom;xpmaximize(c,1);
+  resize(c,(struct wlr_box){20,20,320,240},1);
+  assert(wlr_box_equal(&c->geom,&c->mon->w));
+  delay=0;break;
+ case 7:
+  c=browser ? browser : terminal;
+  assert(wlr_box_equal(&c->geom,&c->mon->w));
+  xpmaximize(c,0);assert(wlr_box_equal(&c->geom,&saved));
+  delay=0;break;
+ case 8:
+  c=browser ? browser : terminal;
+  setfullscreen(c,1);resize(c,(struct wlr_box){20,20,320,240},1);
+  assert(wlr_box_equal(&c->geom,&c->mon->m));
+  /* Duplicate client requests must not replace the restore geometry. */
+  setfullscreen(c,1);delay=0;break;
+ case 9:
+  c=browser ? browser : terminal;
+  assert(wlr_box_equal(&c->geom,&c->mon->m));
+  setfullscreen(c,0);assert(wlr_box_equal(&c->geom,&saved));
+  delay=0;break;
+ case 10:
+  xpallfloat(&(Arg){0});delay=0;break;
+ case 11:
   wl_list_for_each(c, &clients, link) {
    assert(c->surface.xdg->toplevel->current.tiled == 0);
    if (!c->maximized) assert(c->scene->node.parent == layers[LyrTile]);
   }
-  fprintf(stderr, "PASS: mixed GTK/terminal%s tiling, oversized hints, nonoverlap, layers, maximize restore, floating configure state\n", browser ? "/Firefox" : "");
+  c=browser ? browser : terminal;
+  /* Floating layout retains the pre-existing permissive resize policy. */
+  assert(!c->mon->lt[c->mon->sellt]->arrange);
+  assert(client_manual_geometry(c));
+  assert(system_enabled(c)&(1u<<1));
+  saved=c->geom;xpmaximize(c,1);
+  resize(c,(struct wlr_box){20,20,320,240},1);
+  assert(c->geom.width==320 && c->geom.height==240);
+  xpmaximize(c,0);assert(wlr_box_equal(&c->geom,&saved));
+  setfullscreen(c,1);resize(c,(struct wlr_box){20,20,320,240},1);
+  assert(c->geom.width==320 && c->geom.height==240);
+  setfullscreen(c,0);assert(wlr_box_equal(&c->geom,&saved));
+  fprintf(stderr, "PASS: mixed GTK/terminal%s tiling, oversized hints, nonoverlap, layers, maximize restore, floating configure state, WM-only enforced maximize/fullscreen, permissive floating layout and duplicate-request restore\n", browser ? "/Firefox" : "");
   wl_display_terminate(dpy); return 0;
  }
 again:
@@ -119,7 +181,7 @@ int main(void)
  timer = wl_event_loop_add_timer(event_loop, step, NULL);
  wl_event_source_timer_update(timer, 100);
  run("sh tests/layout-client.sh");
- assert(phase == 6);
+ assert(phase == 12);
  wl_event_source_remove(timer); wl_list_remove(&output_listener.link);
  wl_protocol_logger_destroy(logger); cleanup(); return 0;
 }

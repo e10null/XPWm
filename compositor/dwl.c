@@ -2,6 +2,7 @@
  * See LICENSE file for copyright and license details.
  */
 #include <getopt.h>
+#include <glib.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
@@ -9,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -72,8 +74,12 @@
 #include "decoration.h"
 
 /* macros */
+#ifndef MAX
 #define MAX(A, B)               ((A) > (B) ? (A) : (B))
+#endif
+#ifndef MIN
 #define MIN(A, B)               ((A) < (B) ? (A) : (B))
+#endif
 #define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
 #define VISIBLEON(C, M)         (!(C)->minimized && (M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))
 #define LENGTH(X)               (sizeof X / sizeof X[0])
@@ -376,6 +382,10 @@ static int locked;
 static void *exclusive_focus;
 static struct wl_display *dpy;
 static struct wl_event_loop *event_loop;
+static struct wl_event_source *focus_settings_timer;
+static int hoverfocus;
+static struct stat focus_settings_stat;
+static int focus_settings_seen;
 static struct wlr_backend *backend;
 static struct wlr_scene *scene;
 static struct wlr_scene_tree *layers[NUM_LAYERS];
@@ -417,6 +427,8 @@ static struct wl_listener lock_listener = {.notify = locksession};
 
 static struct wlr_seat *seat;
 static KeyboardGroup *kb_group;
+static uint32_t start_key, start_pressed_at;
+static int start_candidate;
 static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
@@ -469,6 +481,8 @@ static int pressed_button;
 static uint32_t caption_click_time;
 static double caption_click_x, caption_click_y;
 #include "config.h"
+#include "layout-settings.h"
+#include "screensaver.h"
 
 /* attempt to encapsulate suck into one file */
 #include "client.h"
@@ -551,8 +565,9 @@ arrange(Monitor *m)
 		if (c->mon == m) {
 			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
 			client_set_suspended(c, !VISIBLEON(c, m));
-			if (c->maximized && !c->isfullscreen)
-				resize(c, m->w, 0);
+			if ((c->maximized && !c->isfullscreen)
+					|| (c->isfullscreen && m->lt[m->sellt]->arrange))
+				resize(c, c->isfullscreen ? m->m : m->w, 0);
 		}
 	}
 
@@ -649,6 +664,8 @@ axisnotify(struct wl_listener *listener, void *data)
 	 * for example when you move the scroll wheel. */
 	struct wlr_pointer_axis_event *event = data;
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+	if (screensaver_activity()) { wlr_idle_notifier_v1_notify_activity(idle_notifier, seat); return; }
+	if (event->delta != 0 || event->delta_discrete != 0) start_candidate = 0;
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	if (!locked && keyboard
 			&& CLEANMASK(wlr_keyboard_get_modifiers(keyboard)) == MODKEY
@@ -674,6 +691,13 @@ buttonpress(struct wl_listener *listener, void *data)
 	const Button *b;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED && screensaver_activity()) {
+		screensaver_button = event->button; return;
+	}
+	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED && event->button == screensaver_button) {
+		screensaver_button = 0; return;
+	}
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED) start_candidate = 0;
 	if (system_pointer(event)) return;
 	if (switch_scene && event->state == WL_POINTER_BUTTON_STATE_PRESSED) { switch_finish(0); system_swallow = event->button; return; }
 
@@ -732,7 +756,56 @@ buttonpress(struct wl_listener *listener, void *data)
 void
 chvt(const Arg *arg)
 {
-	wlr_session_change_vt(session, arg->ui);
+	if (getenv("XPWM_DEBUG_VT"))
+		wlr_log(WLR_ERROR, "VT diagnostic: requesting VT %u; session=%s",
+				arg->ui, session ? "present" : "absent (nested backend)");
+	if (session && !wlr_session_change_vt(session, arg->ui))
+		wlr_log(WLR_ERROR, "Failed to switch to VT %u", arg->ui);
+}
+
+static unsigned int
+vtnumber(uint32_t mods, xkb_keysym_t sym)
+{
+	if (sym >= XKB_KEY_XF86Switch_VT_1 && sym <= XKB_KEY_XF86Switch_VT_12)
+		return sym - XKB_KEY_XF86Switch_VT_1 + 1;
+	if (CLEANMASK(mods) == (WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT)
+			&& sym >= XKB_KEY_F1 && sym <= XKB_KEY_F12)
+		return sym - XKB_KEY_F1 + 1;
+	return 0;
+}
+
+static void
+reloadfocussettings(void)
+{
+	char *path = g_build_filename(g_get_user_config_dir(), "xpwm", "taskbar.ini", NULL);
+	struct stat current;
+	if (stat(path, &current) < 0) {
+		hoverfocus = sloppyfocus; focus_settings_seen = 0;
+	} else if (!focus_settings_seen || current.st_ino != focus_settings_stat.st_ino
+			|| current.st_mtim.tv_sec != focus_settings_stat.st_mtim.tv_sec
+			|| current.st_mtim.tv_nsec != focus_settings_stat.st_mtim.tv_nsec
+			|| current.st_size != focus_settings_stat.st_size) {
+		GKeyFile *ini = g_key_file_new();
+		GError *error = NULL;
+		hoverfocus = sloppyfocus;
+		if (g_key_file_load_from_file(ini, path, G_KEY_FILE_NONE, NULL)) {
+			gboolean value = g_key_file_get_boolean(ini, "Windows", "FocusFollowsMouse", &error);
+			if (!error) hoverfocus = value;
+		}
+		g_clear_error(&error); g_key_file_unref(ini);
+		focus_settings_stat = current; focus_settings_seen = 1;
+	}
+	g_free(path);
+}
+
+static int
+focussettingstick(void *data)
+{
+	(void)data;
+	reloadfocussettings();
+	screensaver_tick();
+	wl_event_source_timer_update(focus_settings_timer, 250);
+	return 0;
 }
 
 void
@@ -756,6 +829,10 @@ checkidleinhibitor(struct wlr_surface *exclude)
 void
 cleanup(void)
 {
+	screensaver_stop(); xp_saver_config_clear(&screensaver_config);
+	if (focus_settings_timer) {
+		wl_event_source_remove(focus_settings_timer); focus_settings_timer = NULL;
+	}
 #ifdef XWAYLAND
 	wlr_xwayland_destroy(xwayland);
 	xwayland = NULL;
@@ -765,13 +842,13 @@ cleanup(void)
 		kill(-child_pid, SIGTERM);
 		waitpid(child_pid, NULL, 0);
 	}
-	wlr_xcursor_manager_destroy(cursor_mgr);
-
 	destroykeyboardgroup(&kb_group->destroy, NULL);
 
 	/* If it's not destroyed manually it will cause a use-after-free of wlr_seat.
 	 * Destroy it until it's fixed in the wlroots side */
 	wlr_backend_destroy(backend);
+	/* Output teardown can still arrange monitors and reset the cursor. */
+	wlr_xcursor_manager_destroy(cursor_mgr);
 
 	wl_display_destroy(dpy);
 	/* Destroy after the wayland display (when the monitors are already destroyed)
@@ -928,6 +1005,7 @@ commitpopup(struct wl_listener *listener, void *data)
 	Client *c = NULL;
 	struct wlr_box box;
 	int type = -1;
+ struct wlr_xdg_surface *parent_xdg;
 
 	if (!popup->base->initial_commit)
 		return;
@@ -935,8 +1013,12 @@ commitpopup(struct wl_listener *listener, void *data)
 	type = toplevel_from_wlr_surface(popup->base->surface, &c, &l);
 	if (!popup->parent || type < 0)
 		return;
-	popup->base->surface->data = wlr_scene_xdg_surface_create(
-			popup->parent->data, popup->base);
+	/* Root xdg popups are relative to client content, inside the XP frame.
+	 * Nested popups already have their own correctly positioned scene tree. */
+ parent_xdg=wlr_xdg_surface_try_from_wlr_surface(popup->parent);
+ popup->base->surface->data = wlr_scene_xdg_surface_create(
+   c && parent_xdg && parent_xdg->role==WLR_XDG_SURFACE_ROLE_TOPLEVEL
+    ? c->scene_surface : popup->parent->data,popup->base);
 	if ((l && !l->mon) || (c && !c->mon))
 		return;
 	box = type == LayerShell ? l->mon->m : c->mon->w;
@@ -1113,6 +1195,8 @@ createmon(struct wl_listener *listener, void *data)
 			break;
 		}
 	}
+
+	restore_layout_mode(m);
 
 	/* The mode is a tuple of (width, height, refresh rate), and each
 	 * monitor supports only a specific set of modes. We just pick the
@@ -1634,10 +1718,13 @@ handlesig(int signo)
 		 * XWayland.
 		 */
 		while (!waitid(P_ALL, 0, &in, WEXITED|WNOHANG|WNOWAIT) && in.si_pid
-				&& (!xwayland || in.si_pid != xwayland->server->pid))
+				&& (!xwayland || in.si_pid != xwayland->server->pid)) {
+			screensaver_reaped(in.si_pid);
 			waitpid(in.si_pid, NULL, 0);
+		}
 #else
-		while (waitpid(-1, NULL, WNOHANG) > 0);
+		pid_t reaped;
+		while ((reaped = waitpid(-1, NULL, WNOHANG)) > 0) screensaver_reaped(reaped);
 #endif
 	} else if (signo == SIGINT || signo == SIGTERM) {
 		quit(NULL);
@@ -1692,6 +1779,17 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	 * processing.
 	 */
 	const Key *k;
+	/* Media controls stay available while menus or Alt+Tab capture other keys. */
+	if (sym == XKB_KEY_XF86AudioRaiseVolume || sym == XKB_KEY_XF86AudioLowerVolume
+			|| sym == XKB_KEY_XF86AudioMute || sym == XKB_KEY_XF86AudioMicMute
+			|| sym == XKB_KEY_XF86MonBrightnessUp || sym == XKB_KEY_XF86MonBrightnessDown) {
+		for (k = keys; k < END(keys); k++) {
+			if (CLEANMASK(mods) == CLEANMASK(k->mod) && sym == k->keysym && k->func) {
+				k->func(&k->arg);
+				return 1;
+			}
+		}
+	}
 	if (system_key(mods, sym) || switch_key(mods, sym)) return 1;
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
@@ -1701,6 +1799,31 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 		}
 	}
 	return 0;
+}
+
+static void
+start_menu_key(uint32_t time)
+{
+	Monitor *m;
+	LayerSurface *l;
+	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+	if (locked || !keyboard) return;
+	for (int pass = 0; pass < 2; pass++) {
+		wl_list_for_each(m, &mons, link) {
+			if ((pass == 0) != (m == selmon)) continue;
+			for (int layer = 0; layer < 4; layer++) wl_list_for_each(l, &m->layers[layer], link) {
+				if (!l->mapped || strcmp(l->layer_surface->namespace, "xpwm-taskbar")) continue;
+				switch_finish(0); system_close(); system_stop_move(1);
+				focusclient(NULL, 0);
+				client_notify_enter(l->layer_surface->surface, keyboard);
+				/* Deliver a real Wayland key serial so GTK can grab its popup
+				 * even before the pointer has ever entered the taskbar. */
+				wlr_seat_keyboard_notify_key(seat, time, KEY_LEFTMETA, WL_KEYBOARD_KEY_STATE_PRESSED);
+				wlr_seat_keyboard_notify_key(seat, time, KEY_LEFTMETA, WL_KEYBOARD_KEY_STATE_RELEASED);
+				return;
+			}
+		}
+	}
 }
 
 void
@@ -1720,8 +1843,52 @@ keypress(struct wl_listener *listener, void *data)
 
 	int handled = switch_scene != NULL || system_scene != NULL || system_moving != NULL;
 	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
+	if (screensaver_activity()) {
+		if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED && event->keycode <= KEY_MAX) consumed[event->keycode] = 1;
+		start_candidate = 0; start_key = 0;
+		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat); return;
+	}
+	if (event->keycode == KEY_LEFTMETA || event->keycode == KEY_RIGHTMETA) {
+		if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+			struct wlr_keyboard *keyboard = &group->wlr_group->keyboard;
+			start_candidate = !locked && !start_key && !(CLEANMASK(mods) & ~WLR_MODIFIER_LOGO);
+			for (size_t key = 0; key < keyboard->num_keycodes; key++)
+				if (keyboard->keycodes[key] != KEY_LEFTMETA && keyboard->keycodes[key] != KEY_RIGHTMETA)
+					start_candidate = 0;
+			start_key = event->keycode + 1;
+			start_pressed_at = event->time_msec;
+			consumed[event->keycode] = 1;
+		} else {
+			int tapped = start_candidate && start_key == event->keycode + 1
+					&& (uint32_t)(event->time_msec-start_pressed_at) <= 250;
+			start_candidate = 0; start_key = 0;
+			if (tapped) start_menu_key(event->time_msec);
+		}
+		handled = 1;
+	} else if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) start_candidate = 0;
+	if (getenv("XPWM_DEBUG_VT") && event->state == WL_KEYBOARD_KEY_STATE_PRESSED
+			&& (event->keycode == KEY_F3
+				|| (mods & (WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT))
+					== (WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT))) {
+		for (i = 0; i < nsyms; i++)
+			wlr_log(WLR_ERROR, "VT diagnostic: keycode=%u modifiers=0x%x keysym=0x%x target=%u locked=%d",
+					event->keycode, mods, syms[i], vtnumber(mods, syms[i]), locked);
+	}
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+
+	/* VT switching must remain available through menus, Alt+Tab and locks. */
+	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		for (i = 0; i < nsyms; i++) {
+			unsigned int vt = vtnumber(mods, syms[i]);
+			if (!vt) continue;
+			if (event->keycode <= KEY_MAX) consumed[event->keycode] = 1;
+			group->nsyms = 0;
+			wl_event_source_timer_update(group->key_repeat_source, 0);
+			chvt(&(Arg){.ui = vt});
+			return;
+		}
+	}
 
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
@@ -1735,10 +1902,12 @@ keypress(struct wl_listener *listener, void *data)
 		if (!handled && event->keycode <= KEY_MAX) consumed[event->keycode] = previous;
 	}
 
-	/* Volume and an active Alt+Tab selection support held-key repetition. */
+	/* Volume, brightness and Alt+Tab support held-key repetition. */
 	if (handled && nsyms == 1
 			&& (syms[0] == XKB_KEY_XF86AudioRaiseVolume
 				|| syms[0] == XKB_KEY_XF86AudioLowerVolume
+				|| syms[0] == XKB_KEY_XF86MonBrightnessUp
+				|| syms[0] == XKB_KEY_XF86MonBrightnessDown
 				|| (switch_scene && (syms[0] == XKB_KEY_Tab || syms[0] == XKB_KEY_ISO_Left_Tab)))
 			&& group->wlr_group->keyboard.repeat_info.delay > 0) {
 		group->mods = mods;
@@ -2029,6 +2198,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	LayerSurface *l = NULL;
 	struct wlr_surface *surface = NULL;
 	struct wlr_pointer_constraint_v1 *constraint;
+	if (time && screensaver_activity()) {
+		wlr_cursor_move(cursor, device, dx, dy);
+		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat); return;
+	}
 
 	/* Find the client under the pointer and send the event along. */
 	xytonode(cursor->x, cursor->y, &surface, &c, NULL, &sx, &sy);
@@ -2071,7 +2244,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
 		/* Update selmon (even while dragging a window) */
-		if (sloppyfocus)
+		if (hoverfocus)
 			selmon = xytomon(cursor->x, cursor->y);
 	}
 
@@ -2144,7 +2317,7 @@ moveresize(const Arg *arg)
 	if (cursor_mode != CurNormal && cursor_mode != CurPressed)
 		return;
 	xytonode(cursor->x, cursor->y, NULL, &grabc, NULL, NULL, NULL);
-	if (!grabc || client_is_unmanaged(grabc) || grabc->isfullscreen)
+	if (!grabc || client_is_unmanaged(grabc) || grabc->isfullscreen || !client_manual_geometry(grabc))
 		return;
 
 	if (grabc->maximized)
@@ -2252,8 +2425,10 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 {
 	struct timespec now;
 
-	if (surface != seat->pointer_state.focused_surface &&
-			sloppyfocus && time && c && !client_is_unmanaged(c))
+	if (hoverfocus && time && c && client_surface(c) != seat->keyboard_state.focused_surface
+			&& !client_is_unmanaged(c) && !locked && !exclusive_focus
+			&& !switch_scene && !system_scene && !system_moving
+			&& cursor_mode == CurNormal && !seat->drag && !seat->pointer_state.button_count)
 		focusclient(c, 0);
 
 	/* If surface is NULL, clear pointer focus */
@@ -2429,6 +2604,17 @@ resize(Client *c, struct wlr_box geo, int interact)
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
+	/* WM mode owns maximized/fullscreen geometry, even for a client marked
+	 * floating by maximize. Floating layout keeps its normal resize policy. */
+	if (c->mon->lt[c->mon->sellt]->arrange) {
+		if (c->isfullscreen) {
+			geo = c->mon->m;
+			interact = 0;
+		} else if (c->maximized) {
+			geo = c->mon->w;
+			interact = 0;
+		}
+	}
 	bbox = interact ? &sgeom : &c->mon->w;
 
 	client_set_bounds(c, MAX(1, c->mon->w.width - 2 * (int)c->bw),
@@ -2571,6 +2757,7 @@ setfloating(Client *c, int floating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	int was_fullscreen = c->isfullscreen;
 	c->isfullscreen = fullscreen;
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2580,9 +2767,9 @@ setfullscreen(Client *c, int fullscreen)
 			? LyrFS : c->isfloating ? LyrFloat : LyrTile]);
 
 	if (fullscreen) {
-		c->prev = c->geom;
+		if (!was_fullscreen) c->prev = c->geom;
 		resize(c, c->mon->m, 0);
-	} else {
+	} else if (was_fullscreen) {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
@@ -2613,6 +2800,7 @@ setlayout(const Arg *arg)
 		selmon->lt[selmon->sellt] = (Layout *)arg->v;
 	strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, LENGTH(selmon->ltsymbol));
 	arrange(selmon);
+	save_layout_mode(selmon);
 	printstatus();
 }
 
@@ -2639,7 +2827,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	if (oldmon == m)
 		return;
 	c->mon = m;
-	c->prev = c->geom;
+	if (!c->isfullscreen) c->prev = c->geom;
 
 	/* Scene graph sends surface leave/enter events on move and resize */
 	if (oldmon)
@@ -2695,6 +2883,10 @@ setup(void)
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	dpy = wl_display_create();
 	event_loop = wl_display_get_event_loop(dpy);
+	reloadfocussettings();
+	focus_settings_timer = wl_event_loop_add_timer(event_loop, focussettingstick, NULL);
+	if (!focus_settings_timer) die("couldn't create focus settings timer");
+	wl_event_source_timer_update(focus_settings_timer, 250);
 
 	/* The backend is a wlroots feature which abstracts the underlying input and
 	 * output hardware. The autocreate option will choose the most suitable
@@ -2981,7 +3173,7 @@ togglefloating(const Arg *arg)
 {
 	Client *sel = focustop(selmon);
 	/* return if fullscreen */
-	if (sel && !sel->isfullscreen)
+	if (sel && !sel->isfullscreen && client_manual_geometry(sel))
 		setfloating(sel, !sel->isfloating);
 }
 

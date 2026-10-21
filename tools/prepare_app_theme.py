@@ -176,9 +176,13 @@ def prepare(source, share, *, icon_source=None, font_dir=None):
     if font_dir.is_dir():
         config = share / 'fontconfig/fonts.conf'
         config.parent.mkdir(parents=True, exist_ok=True)
-        config.write_text('<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'
-                          '<fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include>'
-                          f'<dir>{escape(str(font_dir))}</dir></fontconfig>\n')
+        # Keep the generated asset bundle relocatable when installed privately.
+        from session_fonts import font_config
+        import os
+        contents = font_config(font_dir)
+        contents = contents.replace(f'<dir>{escape(str(font_dir))}</dir>',
+                                    f'<dir prefix="relative">{escape(os.path.relpath(font_dir, config.parent))}</dir>')
+        config.write_text(contents)
     prepare_icons(source, share, icon_source)
     print(f'Prepared GTK Luna theme ({len(generated)} native control frames) in {output}')
 

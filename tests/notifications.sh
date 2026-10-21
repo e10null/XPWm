@@ -7,7 +7,15 @@ if [ "${1:-}" = client ]; then
     balloon_pid=$!
     trap 'kill "$balloon_pid" 2>/dev/null || true' EXIT HUP INT TERM
     ./shell/notifications-test
-    notify-send -t 100 'Windows XP' 'Application notifications use XP balloons.'
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -t 100 'Windows XP' 'Application notifications use XP balloons.'
+    else
+        # GLib's real D-Bus client also works on minimal desktops without libnotify tools.
+        gdbus call --session --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.Notify \
+            XPWm 0 '' 'Windows XP' 'Application notifications use XP balloons.' '[]' '{}' 100 >/dev/null
+    fi
     kill -TERM "$PPID"
     exit 0
 fi

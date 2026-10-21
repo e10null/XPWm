@@ -67,9 +67,16 @@ static int step(void *data)
 		assert(strstr(value, "accepted user"));
 		spawn(&(Arg)SHCMD("XPWM_LOGOFF_DELAY_MS=700 ./shell/xpwm-logoff")); phase++; break;
 	}
-	case 7:
-		if (!find_layer("xpwm-logoff")) break;
+	case 7: {
+  Monitor *monitor;LayerSurface *surface;int count=0;
+  wl_list_for_each(monitor,&mons,link)
+   wl_list_for_each(surface,&monitor->layers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY],link)
+    if(surface->mapped && !strcmp(surface->layer_surface->namespace,"xpwm-logoff")) count++;
+  if(count!=wl_list_length(&mons)) break;
+  assert(exclusive_focus);
+
 		phase++; break;
+ }
 	case 8:
 		if (getenv("XPWM_LOGOFF_SCREENSHOT")) spawn(&(Arg)SHCMD("grim \"$XPWM_LOGOFF_SCREENSHOT\""));
 		phase++; break;

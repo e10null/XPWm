@@ -90,6 +90,9 @@ static double speaker_x(void)
   if (battery) { count++; break; }
  }
  if (dir) g_dir_close(dir);
+ dir = g_dir_open("/sys/class/backlight", 0, NULL);
+ if (dir && g_dir_read_name(dir)) count++;
+ if (dir) g_dir_close(dir);
  return selmon->m.width-(19+22*count+58+7)+19+11;
 }
 

@@ -26,6 +26,13 @@ xpallfloat(const Arg *arg)
 	int to_floating;
 	if (!selmon) return;
 	to_floating = selmon->lt[selmon->sellt]->arrange != NULL;
+	if (!to_floating) {
+		system_stop_move(1);
+		if (cursor_mode == CurMove || cursor_mode == CurResize) {
+			cursor_mode = CurNormal; grabc = NULL; resize_edges = 0;
+			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+		}
+	}
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon != selmon || c->isfullscreen ||
 				client_get_parent(c) || client_is_float_type(c)) continue;
@@ -55,7 +62,7 @@ xpgeometry(const Arg *arg)
 {
 	Client *c = focustop(selmon);
 	struct wlr_box box;
-	if (!c || c->isfullscreen)
+	if (!c || c->isfullscreen || !client_manual_geometry(c))
 		return;
 	if (c->maximized)
 		xpmaximize(c, 0);

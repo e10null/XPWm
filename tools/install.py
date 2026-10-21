@@ -12,9 +12,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('wlroots-0.18', 'wayland-server', 'wayland-client', 'xkbcommon', 'libinput',
-           'cairo', 'pangocairo', 'fontconfig', 'libdrm', 'gtk+-3.0', 'gio-unix-2.0', 'gtk-layer-shell-0')
-BINARIES = ('xpwm-displayctl', 'xpwm-taskbar', 'xpwm-desktop', 'xpwm-logon',
-            'xpwm-logoff', 'xpwm-theme-preview', 'xpwm-luna-module.so', 'xpwm-sound', 'xpwm-run')
+           'cairo', 'pangocairo', 'fontconfig', 'libdrm', 'gtk+-3.0', 'gio-unix-2.0', 'gtk-layer-shell-0', 'pam', 'wayland-cursor')
+BINARIES = ('xpwm-lock', 'xpwm-displayctl', 'xpwm-taskbar', 'xpwm-desktop', 'xpwm-logon',
+            'xpwm-logoff', 'xpwm-theme-preview', 'xpwm-luna-module.so', 'xpwm-sound', 'xpwm-run', 'xpwm-screensaver', 'xpwm-screenshot')
 MANIFEST = Path('share/xpwm/install-manifest.json')
 
 
@@ -38,19 +38,19 @@ def dependency_command(manager):
     packages = {
         'pacman': ['gcc', 'make', 'pkgconf', 'wlroots0.18', 'wayland', 'wayland-protocols',
                    'libinput', 'libxkbcommon', 'cairo', 'pango', 'fontconfig', 'libdrm',
-                   'gtk3', 'gtk-layer-shell', 'dbus', 'python'],
+                   'gtk3', 'gtk-layer-shell', 'dbus', 'python', 'meson', 'ninja', 'pam'],
         'apt': ['build-essential', 'pkg-config', 'libwlroots-0.18-dev', 'libwayland-dev',
                 'wayland-protocols', 'libinput-dev', 'libxkbcommon-dev', 'libcairo2-dev',
                 'libpango1.0-dev', 'libfontconfig1-dev', 'libdrm-dev', 'libgtk-3-dev',
-                'libgtk-layer-shell-dev', 'dbus', 'dbus-daemon', 'python3'],
+                'libgtk-layer-shell-dev', 'dbus', 'dbus-daemon', 'python3', 'meson', 'ninja-build', 'libpam0g-dev'],
         'dnf': ['gcc', 'make', 'pkgconf-pkg-config', 'wlroots0.18-devel', 'wayland-devel',
                 'wayland-protocols-devel', 'libinput-devel', 'libxkbcommon-devel',
                 'cairo-devel', 'pango-devel', 'fontconfig-devel', 'libdrm-devel',
-                'gtk3-devel', 'gtk-layer-shell-devel', 'dbus-daemon', 'python3'],
+                'gtk3-devel', 'gtk-layer-shell-devel', 'dbus-daemon', 'python3', 'meson', 'ninja-build', 'pam-devel'],
         'zypper': ['gcc', 'make', 'pkg-config', 'pkgconfig(wlroots-0.18)',
                    'wayland-devel', 'wayland-protocols-devel', 'libinput-devel',
                    'libxkbcommon-devel', 'cairo-devel', 'pango-devel', 'fontconfig-devel',
-                   'libdrm-devel', 'gtk3-devel', 'gtk-layer-shell-devel', 'dbus-1', 'python3'],
+                   'libdrm-devel', 'gtk3-devel', 'gtk-layer-shell-devel', 'dbus-1', 'python3', 'meson', 'ninja', 'pam-devel'],
     }
     commands = {'pacman': ['pacman', '-S', '--needed'], 'apt': ['apt-get', 'install'],
                 'dnf': ['dnf', 'install'], 'zypper': ['zypper', 'install']}
@@ -70,7 +70,7 @@ def run(command, dry=False, privileged=False):
 
 
 def check_dependencies():
-    missing = [tool for tool in ('make', 'cc', 'pkg-config', 'wayland-scanner', 'dbus-run-session')
+    missing = [tool for tool in ('make', 'cc', 'pkg-config', 'wayland-scanner', 'dbus-run-session', 'meson', 'ninja')
                if not shutil.which(tool)]
     if missing:
         raise ValueError('Missing tools: ' + ', '.join(missing) + '. Try --deps or install the README requirements.')
@@ -89,11 +89,13 @@ def installed_files(prefix):
     files = {Path('compositor/dwl'): ROOT / 'compositor/dwl'}
     files.update({Path('shell') / name: ROOT / 'shell' / name for name in BINARIES})
     files[Path('shell/session.sh')] = ROOT / 'shell/session.sh'
-    for directory, pattern in (('themes', '*'), ('tools', '*.py'), ('tools', '*.sh')):
+    for directory, pattern in (('themes', '*'), ('tools', '*.py'), ('tools', '*.sh'),
+                               ('platforms', 'session.sh')):
         for source in (ROOT / directory).rglob(pattern):
             if source.is_file() and '__pycache__' not in source.parts:
                 if directory == 'tools' and source.name == 'install.py': continue
                 files[source.relative_to(ROOT)] = source
+    files[Path('licenses/swaylock-MIT.txt')] = ROOT / 'third_party/swaylock/LICENSE'
     result = {Path('lib/xpwm') / name: source.read_bytes() for name, source in files.items()}
     bundle = prefix / 'lib/xpwm'
     bundle_quote = shlex.quote(str(bundle))
@@ -106,6 +108,9 @@ if [ -d "$asset_root/assets/local" ]; then export XPWM_ASSET_ROOT="$asset_root";
     result[Path('bin/xpwm-theme-preview')] = (
         f'#!/bin/sh\nset -eu\n{asset_setup}export XPWM_PROJECT_ROOT={bundle_quote}\n'
         f'. {bundle_quote}/tools/session-theme.sh\nexec {bundle_quote}/shell/xpwm-theme-preview "$@"\n').encode()
+    result[Path('bin/xpwm-screenshot')] = (
+        f'#!/bin/sh\nset -eu\n{asset_setup}export XPWM_PROJECT_ROOT={bundle_quote}\n'
+        f'. {bundle_quote}/tools/session-theme.sh\nexec {bundle_quote}/shell/xpwm-screenshot "$@"\n').encode()
     def desktop_exec(path):
         return '"' + str(path).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%') + '"'
     result[Path('share/wayland-sessions/xpwm.desktop')] = (
@@ -116,7 +121,9 @@ if [ -d "$asset_root/assets/local" ]; then export XPWM_ASSET_ROOT="$asset_root";
         f'Exec={desktop_exec(prefix / "bin/xpwm-theme-preview")}\nCategories=Settings;\nTerminal=false\n').encode()
     result[Path('share/doc/xpwm/README.md')] = (ROOT / 'README.md').read_bytes()
     for name in ('LICENSE', 'compositor/LICENSE', 'compositor/LICENSE.dwm',
-                 'compositor/LICENSE.sway', 'compositor/LICENSE.tinywl', 'compositor/UPSTREAM.md'):
+                 'compositor/LICENSE.sway', 'compositor/LICENSE.tinywl', 'compositor/UPSTREAM.md',
+                 'compositor/protocols/wlr-screencopy-unstable-v1.xml',
+                 'compositor/protocols/wlr-data-control-unstable-v1.xml'):
         result[Path('share/licenses/xpwm') / name] = (ROOT / name).read_bytes()
     return result
 
@@ -178,7 +185,7 @@ def uninstall(prefix, destdir=None):
     for name, digest in report['files'].items():
         relative = Path(name)
         allowed = relative.parts[:2] in (('lib', 'xpwm'),) or str(relative) in (
-            'bin/xpwm', 'bin/xpwm-import-assets', 'bin/xpwm-theme-preview',
+            'bin/xpwm', 'bin/xpwm-import-assets', 'bin/xpwm-theme-preview', 'bin/xpwm-screenshot',
             'share/wayland-sessions/xpwm.desktop', 'share/applications/xpwm-theme-preview.desktop') or relative.parts[:3] in (
             ('share', 'doc', 'xpwm'), ('share', 'licenses', 'xpwm'))
         if not allowed: raise ValueError(f'Unexpected manifest path: {name}')

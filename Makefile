@@ -6,15 +6,44 @@ clean:
 	$(MAKE) -C compositor clean
 	$(MAKE) -C shell clean
 check: all
+	$(MAKE) -C shell night-light-test
+	./shell/night-light-test
+	$(MAKE) -C compositor lock-theme-test
+	sh tests/lock-theme.sh
+	$(MAKE) -C compositor lock-policy-test
+	sh tests/lock-policy.sh
+	$(MAKE) -C shell screensaver-render-test
+	./shell/screensaver-render-test
+	$(MAKE) -C compositor screensaver-test
+	sh tests/screensaver.sh
+	$(MAKE) -C compositor start-key-test
+	sh tests/start-key.sh
+	$(MAKE) -C compositor layout-persistence-test
+	sh tests/layout-persistence.sh
+	$(MAKE) -C compositor hover-focus-test
+	sh tests/hover-focus.sh
+	$(MAKE) -C compositor media-keys-test
+	./compositor/media-keys-test
+	$(MAKE) -C compositor vt-keys-test
+	./compositor/vt-keys-test
 	$(MAKE) check-assets
+	$(MAKE) -C shell xpwm-screenshot screenshot-test
+	sh tests/screenshot.sh
+	$(MAKE) -C compositor screenshot-policy-test
+	sh tests/screenshot-policy.sh
 	$(MAKE) -C shell run-command-test
 	./shell/run-command-test
+	$(MAKE) -C shell run-suggestions-test run-completion-test
+	./shell/run-suggestions-test
+	sh tests/run-completion.sh
 	$(MAKE) -C shell run-history-test
 	./shell/run-history-test
 	$(MAKE) -C shell run-associations-test
 	./shell/run-associations-test
 	$(MAKE) -C shell start-menu-test
 	./shell/start-menu-test
+	$(MAKE) -C shell start-actions-test
+	sh tests/start-actions.sh
 	$(MAKE) -C shell notifications-test
 	sh tests/notifications.sh
 	$(MAKE) -C shell tray-test
@@ -46,6 +75,10 @@ check: all
 	$(MAKE) -C shell desktop-render-test
 	./shell/desktop-render-test
 	sh tests/desktop.sh
+	$(MAKE) -C shell desktop-popup-test
+	$(MAKE) -C compositor popup-placement-test
+	sh tests/popup-placement.sh
+	sh tests/desktop-layout.sh
 	$(MAKE) -C compositor desktop-input-test
 	sh tests/desktop-input.sh
 	$(MAKE) -C shell display-settings-test

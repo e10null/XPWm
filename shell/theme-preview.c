@@ -1,5 +1,6 @@
 /* Real, unscoped GTK widgets: verifies the app theme without shell CSS providers. */
 #include <gtk/gtk.h>
+#include <fontconfig/fontconfig.h>
 static GtkWidget *window;
 
 static gboolean ready(gpointer data)
@@ -15,9 +16,26 @@ static gboolean ready(gpointer data)
 		GdkRGBA color;
 		PangoFontDescription *font = NULL;
 		char *font_name = NULL, *rgba = NULL;
+  gint dpi=0;
 		g_object_get(gtk_settings_get_default(), "gtk-font-name", &font_name,
-			"gtk-xft-rgba", &rgba, NULL);
+			"gtk-xft-rgba", &rgba,"gtk-xft-dpi",&dpi, NULL);
+  g_assert_cmpint(dpi,==,96*1024);
 		g_assert_cmpstr(font_name, ==, "Tahoma 8");
+  g_object_set(gtk_settings_get_default(),"gtk-font-name","Sans 19",NULL);
+  char *restored=NULL;g_object_get(gtk_settings_get_default(),"gtk-font-name",&restored,NULL);
+  g_assert_cmpstr(restored,==,"Tahoma 8");g_free(restored);
+  const char *requested[]={"sans-serif","Tahoma","Arial"};
+  const char *expected[]={"Tahoma","Tahoma","Arial"};
+  for(guint i=0;i<G_N_ELEMENTS(requested);i++) {
+   FcPattern *pattern=FcNameParse((const FcChar8 *)requested[i]);FcResult result;
+   FcConfigSubstitute(NULL,pattern,FcMatchPattern);FcDefaultSubstitute(pattern);
+   FcPattern *match=FcFontMatch(NULL,pattern,&result);FcChar8 *family=NULL,*path=NULL;
+   g_assert_nonnull(match);g_assert_cmpint(FcPatternGetString(match,FC_FAMILY,0,&family),==,FcResultMatch);
+   g_assert_cmpstr((const char *)family,==,expected[i]);
+   g_assert_cmpint(FcPatternGetString(match,FC_FILE,0,&path),==,FcResultMatch);
+   g_assert_nonnull(strstr((const char *)path,"luna-blue-complete/fonts/"));
+   FcPatternDestroy(match);FcPatternDestroy(pattern);
+  }
 		g_assert_cmpstr(rgba, ==, "none");
 		g_free(font_name); g_free(rgba);
 		const char *css_path = g_getenv("XPWM_THEME_CSS");
@@ -33,7 +51,11 @@ static gboolean ready(gpointer data)
 		gtk_style_context_get(context, GTK_STATE_FLAG_NORMAL, "font", &font, NULL);
 		g_assert(g_str_has_prefix(pango_font_description_get_family(font), "Tahoma"));
 		g_assert_cmpint(pango_font_description_get_size(font), ==, 8 * PANGO_SCALE);
-		pango_font_description_free(font);
+		PangoFont *resolved=pango_context_load_font(gtk_widget_get_pango_context(GTK_WIDGET(data)),font);
+  g_assert_nonnull(resolved);PangoFontDescription *actual=pango_font_describe(resolved);
+  g_assert_cmpstr(pango_font_description_get_family(actual),==,"Tahoma");
+  pango_font_description_free(actual);g_object_unref(resolved);
+  pango_font_description_free(font);
 		if (g_getenv("XPWM_GTK_ICON_THEME")) {
 			GtkIconInfo *info = gtk_icon_theme_lookup_icon(gtk_icon_theme_get_default(), "folder-documents", 32, 0);
 			g_assert(info); g_assert(strstr(gtk_icon_info_get_filename(info), "/icons/XPWm-Luna/"));

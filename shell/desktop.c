@@ -8,6 +8,8 @@
 #include "../shared/luna.h"
 #include "xp-style.h"
 #include "display-settings.h"
+#include "screensaver-settings.h"
+#include "night-light.h"
 #include "../shared/sounds.h"
 
 typedef struct {
@@ -34,6 +36,7 @@ static int *drag_start, focused_icon, selection_anchor;
 static gboolean plain_click, rubber_toggle, rubber_add;
 static gboolean *selection_base;
 static void reload_icons(void);
+static void prepare_layout(void);
 static guint icon_count;
 static int wall_mode;
 enum { WALL_STRETCH, WALL_CENTER, WALL_TILE };
@@ -303,6 +306,7 @@ static void paint_desktop(cairo_t *cr, int width, int height)
 }
 static gboolean draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 {
+ prepare_layout();
  paint_desktop(cr, gtk_widget_get_allocated_width(widget), gtk_widget_get_allocated_height(widget));
  return FALSE;
 }
@@ -317,6 +321,13 @@ static DesktopIcon *hit(double x, double y)
 static void launch(DesktopIcon *icon, guint32 timestamp)
 {
 	GError *error = NULL;
+	if (icon->file) {
+		GdkAppLaunchContext *context = gdk_display_get_app_launch_context(gtk_widget_get_display(window));
+		gdk_app_launch_context_set_timestamp(context, timestamp);
+		if (!desktop_file_launch(icon->file, G_APP_LAUNCH_CONTEXT(context), &error))
+			error_dialog("Unable to open desktop item", error);
+		g_object_unref(context); return;
+	}
 	if (!gtk_show_uri_on_window(GTK_WINDOW(window), icon->uri, timestamp, &error)) error_dialog("Unable to open desktop item", error);
 }
 
@@ -365,6 +376,11 @@ static void properties_changed(GtkComboBox *combo, gpointer data)
 static void apply_wallpaper(gint response_id)
 {
  if (!properties_window) return;
+ GtkWidget *saver = g_object_get_data(G_OBJECT(properties_window), "screensaver-page");
+ GError *error = NULL;
+ GtkWidget *night = g_object_get_data(G_OBJECT(properties_window), "night-light-page");
+ if (night && night_dirty(night) && !night_apply(night, &error)) { error_dialog("Unable to apply Night Light", error); return; }
+ if (saver && !xp_saver_settings_apply(saver, &error)) { error_dialog("Unable to save screen saver settings", error); return; }
  GtkWidget *combo = g_object_get_data(G_OBJECT(properties_window), "wallpaper-mode");
  int mode = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
  if (mode >= WALL_STRETCH && mode <= WALL_TILE) wall_mode = mode;
@@ -384,6 +400,10 @@ static void display_changed(gpointer data)
   GtkWidget *settings = g_object_get_data(G_OBJECT(properties_window), "display-settings-page");
   GtkWidget *combo = g_object_get_data(G_OBJECT(properties_window), "wallpaper-mode");
   gboolean pending = settings && xp_display_settings_dirty(settings);
+  GtkWidget *saver = g_object_get_data(G_OBJECT(properties_window), "screensaver-page");
+  if (saver) pending |= xp_saver_settings_dirty(saver);
+  GtkWidget *night = g_object_get_data(G_OBJECT(properties_window), "night-light-page");
+  if (night) pending |= night_dirty(night);
   if (combo) pending |= gtk_combo_box_get_active(GTK_COMBO_BOX(combo)) != wall_mode;
   gtk_dialog_set_response_sensitive(GTK_DIALOG(properties_window), GTK_RESPONSE_APPLY, pending);
  }
@@ -406,9 +426,11 @@ static void properties(GtkMenuItem *item, gpointer data)
 {
 	GtkWidget *box, *notebook, *page, *preview, *row, *label, *combo, *actions;
 	if (properties_window) { gtk_window_present(GTK_WINDOW(properties_window)); return; }
-	properties_window = gtk_dialog_new_with_buttons("Display Properties", GTK_WINDOW(window),
-		GTK_DIALOG_DESTROY_WITH_PARENT, "OK", GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL,
+	properties_window = gtk_dialog_new_with_buttons("Display Properties", NULL,
+		0, "OK", GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL,
 		"_Apply", GTK_RESPONSE_APPLY, NULL);
+	/* A regular toplevel must not inherit popup parenting from the desktop layer. */
+ g_signal_connect_object(window,"destroy",G_CALLBACK(gtk_widget_destroy),properties_window,G_CONNECT_SWAPPED);
 	g_signal_connect(properties_window, "destroy", G_CALLBACK(gtk_widget_destroyed), &properties_window);
 	gtk_widget_set_name(properties_window, "xpwm-properties");
 	gtk_window_set_resizable(GTK_WINDOW(properties_window), FALSE);
@@ -439,8 +461,14 @@ static void properties(GtkMenuItem *item, gpointer data)
 	gtk_box_pack_start(GTK_BOX(page), row, FALSE, FALSE, 0);
 	g_object_set_data(G_OBJECT(properties_window), "wallpaper-mode", combo);
  GtkWidget *settings = xp_display_settings_new(GTK_WINDOW(properties_window), display_changed, NULL);
+ GtkWidget *saver = xp_saver_settings_new(display_changed, NULL);
+ gtk_notebook_append_page(GTK_NOTEBOOK(notebook), saver, gtk_label_new("Screen Saver"));
+ g_object_set_data(G_OBJECT(properties_window), "screensaver-page", saver);
  gtk_notebook_append_page(GTK_NOTEBOOK(notebook), settings, gtk_label_new("Settings"));
  g_object_set_data(G_OBJECT(properties_window), "display-settings-page", settings);
+ GtkWidget *night = night_page(properties_window);
+ gtk_notebook_append_page(GTK_NOTEBOOK(notebook), night, gtk_label_new("Night Light"));
+ g_object_set_data(G_OBJECT(properties_window), "night-light-page", night);
  g_object_set_data(G_OBJECT(properties_window), "properties-notebook", notebook);
 	g_signal_connect(combo, "changed", G_CALLBACK(properties_changed), preview);
 	g_signal_connect(properties_window, "response", G_CALLBACK(properties_response), NULL);
@@ -448,6 +476,7 @@ static void properties(GtkMenuItem *item, gpointer data)
 	actions = gtk_dialog_get_action_area(GTK_DIALOG(properties_window));
 	G_GNUC_END_IGNORE_DEPRECATIONS
 	gtk_container_set_border_width(GTK_CONTAINER(actions), 7); gtk_box_set_spacing(GTK_BOX(actions), 6);
+	gtk_button_box_set_layout(GTK_BUTTON_BOX(actions), GTK_BUTTONBOX_CENTER);
 	xp_style_apply(properties_window);
 	gtk_dialog_set_response_sensitive(GTK_DIALOG(properties_window), GTK_RESPONSE_APPLY, FALSE);
 	gtk_widget_show_all(properties_window);
@@ -518,6 +547,27 @@ static gboolean button(GtkWidget *widget, GdkEventButton *event, gpointer data)
  return TRUE;
 }
 
+static gboolean layout_restart_test(gpointer data)
+{
+ if (loading || gtk_widget_get_allocated_width(canvas)<800) return G_SOURCE_CONTINUE;
+ const char *mode=g_getenv("XPWM_LAYOUT_RESTART_TEST");
+ g_assert_cmpuint(icon_count,==,6);
+ for (guint i=0;i<2;i++) {
+  DesktopIcon *icon=&icons[i ? 5 : 0];int x=i ? 688 : 400,y=i ? 418 : 338;
+  if (!strcmp(mode,"write")) {
+   auto_arrange=FALSE;align_grid=TRUE;
+   GdkEventButton press={.type=GDK_BUTTON_PRESS,.button=1,.x=icon->x+30,.y=icon->y+12};
+   button(canvas,&press,NULL);
+   GdkEventMotion move={.x=x+30,.y=y+12};
+   desktop_motion(canvas,&move,NULL);desktop_release(canvas,&press,NULL);
+  }
+  g_assert_cmpint(icon->x,==,x);g_assert_cmpint(icon->y,==,y);
+ }
+ const char *marker=g_getenv("XPWM_LAYOUT_RESTART_MARKER");
+ g_assert_true(g_file_set_contents(marker,"PASS: dragged icon survives desktop restart\n",-1,NULL));
+ gtk_main_quit();return G_SOURCE_REMOVE;
+}
+
 static gboolean test_ready(gpointer data)
 {
 	static int stage;
@@ -543,7 +593,7 @@ static gboolean test_ready(gpointer data)
 	if (stage == 1) {
 		if (g_getenv("XPWM_DISPLAY_SETTINGS_SCREENSHOT")) {
    GtkWidget *notebook = g_object_get_data(G_OBJECT(properties_window), "properties-notebook");
-   gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook), 1);
+   gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook), gtk_notebook_page_num(GTK_NOTEBOOK(notebook), g_object_get_data(G_OBJECT(properties_window), "display-settings-page")));
    stage = 10;
    return G_SOURCE_CONTINUE;
   }
@@ -621,7 +671,10 @@ int main(int argc, char **argv)
   g_timeout_add(100, desktop_input_test, NULL);
  }
 	if (g_getenv("XPWM_DESKTOP_TEST")) g_timeout_add(350, test_ready, NULL);
+ if (g_getenv("XPWM_LAYOUT_RESTART_TEST")) g_timeout_add(150, layout_restart_test, NULL);
+ night_start();
 	gtk_main();
+ night_stop();
 	g_clear_object(&wallpaper);
  if (wallpaper_cache) cairo_surface_destroy(wallpaper_cache);
 	if (wallpaper_surface) cairo_surface_destroy(wallpaper_surface);

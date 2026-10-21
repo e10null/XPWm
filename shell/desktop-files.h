@@ -17,6 +17,7 @@ typedef struct {
 } DesktopJob;
 GPtrArray *desktop_files_list(GFile *folder, GCancellable *cancel, GError **error);
 void desktop_file_free(gpointer item);
+gboolean desktop_file_launch(GFile *file, GAppLaunchContext *context, GError **error);
 DesktopJob *desktop_job_new(DesktopOperation operation, GFile *destination);
 void desktop_job_free(gpointer job);
 gboolean desktop_job_execute(DesktopJob *job, GCancellable *cancel, GError **error);

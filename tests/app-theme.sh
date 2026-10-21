@@ -24,6 +24,7 @@ cat > "$XDG_CONFIG_HOME/gtk-3.0/settings.ini" <<'SETTINGS'
 [Settings]
 gtk-font-name=Sans 19
 gtk-xft-rgba=rgb
+gtk-xft-dpi=147456
 SETTINGS
 export WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman
 unset WAYLAND_DISPLAY DISPLAY

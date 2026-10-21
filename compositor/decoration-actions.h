@@ -114,7 +114,7 @@ decorationpress(Client *c, struct wlr_pointer_button_event *event)
 	if (y >= c->geom.height - c->bw) edges |= WLR_EDGE_BOTTOM;
 	edges &= client_resize_edges(c);
 	if (edges) {
-		if (c->maximized)
+		if (c->maximized || !client_manual_geometry(c))
 			return 1;
 		setfloating(c, 1);
 		grabc = c;

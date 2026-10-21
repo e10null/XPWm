@@ -40,10 +40,11 @@ static int quick_pressed, quick_hover;
 static int tray_pressed = -1;
 static gboolean tray_double;
 static TaskbarSettings settings;
-static GtkWidget *properties, *settings_checks[5];
+static GtkWidget *properties, *settings_checks[6];
 static gboolean pointer_inside, bar_hidden;
 static guint hide_timer;
 static void schedule_hide(void);
+static void set_hidden(gboolean hidden);
 static void apply_settings(void);
 static void open_properties(GtkMenuItem *item, gpointer data);
 enum { BAR_HEIGHT = 30, START_WIDTH = 100, QUICK_WIDTH = 50, QUICK_BUTTON = 23 };
@@ -247,14 +248,18 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 	cairo_pattern_add_color_stop_rgb(gradient, 1, .05, .25, .77);
 	cairo_set_source(cr, gradient); cairo_paint(cr); cairo_pattern_destroy(gradient);
 	luna_draw(cr, "taskbar", 0, 0, 0, width, BAR_HEIGHT);
-	if (!luna_draw(cr, "start", start_menu || (start_pressed && start_hover) ? 2 : start_hover ? 1 : 0, 0, 0, START_WIDTH, BAR_HEIGHT)) {
+	/* XP's Start bitmap is 33px high: its bottom three padding rows extend
+	 * past the 30px taskbar. Preserve native height and clip that padding. */
+ cairo_save(cr);cairo_rectangle(cr,0,0,START_WIDTH,BAR_HEIGHT);cairo_clip(cr);
+	if (!luna_draw(cr, "start", start_menu || (start_pressed && start_hover) ? 2 : start_hover ? 1 : 0, 0, 0, START_WIDTH, BAR_HEIGHT+3)) {
 		cairo_set_source_rgb(cr, .15, .53, .15); cairo_rectangle(cr, 0, 1, START_WIDTH, BAR_HEIGHT-1); cairo_fill(cr);
 	}
+ cairo_restore(cr);
 	/* NORMALBLUE_INI: content 10,24,2,4; one shared optical center. */
 	start_logo(cr, 10, 4);
 	{
 		PangoLayout *label = pango_cairo_create_layout(cr);
-		PangoFontDescription *font = pango_font_description_from_string("Franklin Gothic Medium Italic 14");
+		PangoFontDescription *font = pango_font_description_from_string("Franklin Gothic Medium Bold Italic 14");
 		PangoRectangle ink;
 		pango_cairo_context_set_resolution(pango_layout_get_context(label), 96);
 		pango_layout_set_font_description(label, font); pango_layout_set_text(label, "start", -1);
@@ -354,6 +359,39 @@ static void menu_closed(GtkWidget *menu, gpointer data)
 	 * event has finished, including their application/folder callback data. */
 	g_idle_add(dispose_menu, g_object_ref(menu));
 	redraw();
+}
+
+static gboolean start_key_event(GtkWidget *widget, GdkEventKey *event, gpointer data);
+static void toggle_start(GdkEvent *event)
+{
+	if (start_menu) { gtk_menu_popdown(GTK_MENU(start_menu)); return; }
+	if (task_menu) gtk_menu_popdown(GTK_MENU(task_menu));
+	set_hidden(FALSE);
+	GdkRectangle anchor = {0, 0, START_WIDTH, BAR_HEIGHT};
+	start_menu = start_menu_new();
+	menu_keyboard(TRUE);
+	gtk_menu_attach_to_widget(GTK_MENU(start_menu), canvas, NULL);
+	g_signal_connect(start_menu, "selection-done", G_CALLBACK(menu_closed), NULL);
+	g_signal_connect(start_menu, "hide", G_CALLBACK(menu_closed), NULL);
+	g_signal_connect(start_menu, "key-press-event", G_CALLBACK(start_key_event), NULL);
+	g_signal_connect(start_menu, "key-release-event", G_CALLBACK(start_key_event), NULL);
+	gtk_menu_popup_at_rect(GTK_MENU(start_menu), gtk_widget_get_window(canvas),
+		&anchor, GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_SOUTH_WEST, event);
+	redraw();
+}
+
+static gboolean start_key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
+{
+	(void)widget; (void)data;
+	if (event->keyval != GDK_KEY_Super_L && event->keyval != GDK_KEY_Super_R) return FALSE;
+	if (event->type == GDK_KEY_RELEASE) {
+		toggle_start((GdkEvent *)event);
+		if (g_getenv("XPWM_START_KEY_TEST")) {
+			char *path = g_build_filename(g_getenv("XDG_RUNTIME_DIR"), "start-key-state", NULL);
+			g_file_set_contents(path, start_menu ? "open" : "closed", -1, NULL); g_free(path);
+		}
+	}
+	return TRUE;
 }
 
 static void task_action(GtkMenuItem *item, gpointer data)
@@ -517,16 +555,7 @@ static gboolean button(GtkWidget *w, GdkEventButton *event, gpointer data)
 	else if (event->type == GDK_BUTTON_RELEASE) {
 		if (start_pressed && event->x >= 0 && event->x < START_WIDTH &&
 				event->y >= 0 && event->y < BAR_HEIGHT && !start_menu) {
-			GdkRectangle anchor = {0, 0, START_WIDTH, BAR_HEIGHT};
-			start_menu = start_menu_new();
-			/* A noninteractive layer has no keyboard focus to lend its popup.
-			 * Request it only while Start is open; dismissal restores normal focus. */
-			menu_keyboard(TRUE);
-			gtk_menu_attach_to_widget(GTK_MENU(start_menu), canvas, NULL);
-			g_signal_connect(start_menu, "selection-done", G_CALLBACK(menu_closed), NULL);
-			g_signal_connect(start_menu, "hide", G_CALLBACK(menu_closed), NULL);
-			gtk_menu_popup_at_rect(GTK_MENU(start_menu), gtk_widget_get_window(canvas),
-				&anchor, GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_SOUTH_WEST, (GdkEvent *)event);
+			toggle_start((GdkEvent *)event);
 		}
 		if (quick_pressed && quick_pressed == quick_hover) {
 			if (quick_pressed == 1) {
@@ -588,7 +617,8 @@ static void properties_response(GtkDialog *dialog, int response, gpointer data)
    gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(settings_checks[1])),
    gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(settings_checks[2])),
    gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(settings_checks[3])),
-   gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(settings_checks[4]))};
+   gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(settings_checks[4])),
+   gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(settings_checks[5]))};
   GError *error = NULL;
   if (!taskbar_settings_save(&draft, &error)) {
    GtkWidget *message = gtk_message_dialog_new(GTK_WINDOW(dialog), GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -612,13 +642,19 @@ static void open_properties(GtkMenuItem *item, gpointer data)
  gtk_container_set_border_width(GTK_CONTAINER(box), 14); gtk_box_set_spacing(GTK_BOX(box), 12);
  GtkWidget *title = gtk_label_new("Taskbar appearance"); gtk_widget_set_halign(title, GTK_ALIGN_START);
  gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
- const char *labels[] = {"Show the _clock", "Show _Quick Launch", "_Auto-hide the taskbar", "_Keep the taskbar on top of other windows", "_Group similar taskbar buttons"};
- const gboolean values[] = {settings.clock, settings.quick_launch, settings.auto_hide, settings.on_top, settings.group_similar};
+ const char *labels[] = {"Show the _clock", "Show _Quick Launch", "_Auto-hide the taskbar", "_Keep the taskbar on top of other windows", "_Group similar taskbar buttons", "Activation follows _mouse (X-Mouse)"};
+ const gboolean values[] = {settings.clock, settings.quick_launch, settings.auto_hide, settings.on_top, settings.group_similar, settings.focus_follows_mouse};
  for (guint i = 0; i < G_N_ELEMENTS(labels); i++) {
+  if (i == 5) {
+   GtkWidget *heading = gtk_label_new("Window behavior");
+   gtk_widget_set_halign(heading, GTK_ALIGN_START);
+   gtk_box_pack_start(GTK_BOX(box), heading, FALSE, FALSE, 0);
+  }
   settings_checks[i] = gtk_check_button_new_with_mnemonic(labels[i]);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settings_checks[i]), values[i]);
   gtk_box_pack_start(GTK_BOX(box), settings_checks[i], FALSE, FALSE, 0);
  }
+ gtk_widget_set_tooltip_text(settings_checks[5], "Focus the window under the pointer without clicking or raising it.");
  g_signal_connect(properties, "response", G_CALLBACK(properties_response), NULL);
  g_signal_connect(properties, "destroy", G_CALLBACK(properties_destroyed), NULL);
  xp_style_apply(properties); gtk_widget_show_all(properties);
@@ -760,8 +796,8 @@ static gboolean settings_marked(const char *name)
 }
 static void settings_test_draft(gboolean defaults)
 {
- const gboolean values[] = {defaults, defaults, !defaults, defaults, defaults};
- for (guint i = 0; i < 5; i++) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settings_checks[i]), values[i]);
+ const gboolean values[] = {defaults, defaults, !defaults, defaults, defaults, !defaults};
+ for (guint i = 0; i < G_N_ELEMENTS(values); i++) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settings_checks[i]), values[i]);
 }
 static gboolean settings_test(gpointer data)
 {
@@ -774,13 +810,16 @@ static gboolean settings_test(gpointer data)
   open_properties(NULL, NULL); GtkWidget *first = properties; open_properties(NULL, NULL); g_assert_true(first == properties);
   settings_test_draft(FALSE); gtk_dialog_response(GTK_DIALOG(properties), GTK_RESPONSE_CANCEL);
   g_assert_true(settings.clock && settings.quick_launch && !settings.auto_hide && settings.on_top);
+  g_assert_false(settings.focus_follows_mouse);
   open_properties(NULL, NULL); settings_test_draft(FALSE);
   gtk_dialog_response(GTK_DIALOG(properties), GTK_RESPONSE_APPLY);
   g_assert_false(settings.clock); g_assert_false(settings.quick_launch); g_assert_false(settings.on_top);
   g_assert_true(settings.auto_hide);
+  g_assert_true(settings.focus_follows_mouse);
   g_assert_cmpint(quick_width(), ==, 0); g_assert_cmpint(quick_at(START_WIDTH+10), ==, 0);
   g_assert_cmpint(xp_tray_clock_width(), ==, 0); g_assert_cmpint(xp_tray_hit(xp_tray_width()-1), ==, -1);
   TaskbarSettings loaded; taskbar_settings_load(&loaded);
+  g_assert_true(loaded.focus_follows_mouse);
   g_assert_false(loaded.clock || loaded.quick_launch || loaded.on_top || loaded.group_similar); g_assert_true(loaded.auto_hide);
   settings_test_draft(TRUE); gtk_dialog_response(GTK_DIALOG(properties), GTK_RESPONSE_CANCEL);
   g_assert_false(settings.clock); pointer_inside = FALSE; schedule_hide(); phase++; break;
@@ -796,6 +835,7 @@ static gboolean settings_test(gpointer data)
   gtk_dialog_response(GTK_DIALOG(properties), GTK_RESPONSE_OK);
   g_assert_null(properties);
   g_assert_true(settings.clock && settings.quick_launch && settings.on_top && settings.group_similar && !settings.auto_hide);
+  g_assert_false(settings.focus_follows_mouse);
   g_assert_cmpint(xp_tray_clock_width(), ==, 58); g_assert_cmpint(quick_width(), ==, QUICK_WIDTH);
   settings_marker("settings-restored"); phase++; break;
  case 3:
@@ -840,6 +880,8 @@ int main(int argc, char **argv)
 	g_signal_connect(canvas, "leave-notify-event", G_CALLBACK(leave), NULL);
 	g_signal_connect(canvas, "scroll-event", G_CALLBACK(scroll), NULL);
 	g_signal_connect(bar, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+	g_signal_connect(bar, "key-press-event", G_CALLBACK(start_key_event), NULL);
+	g_signal_connect(bar, "key-release-event", G_CALLBACK(start_key_event), NULL);
 	g_timeout_add_seconds(1, tick, NULL);
 	xp_tray_init(canvas);
 	gtk_widget_show_all(bar);

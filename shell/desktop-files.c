@@ -1,11 +1,37 @@
 #define _XOPEN_SOURCE 700
 #include "desktop-files.h"
+#include <gio/gdesktopappinfo.h>
 #include <stdlib.h>
 #include <string.h>
 void desktop_file_free(gpointer item)
 {
  DesktopFile *file = item;
  g_object_unref(file->file); g_clear_object(&file->icon); g_free(file->label); g_free(file);
+}
+gboolean desktop_file_launch(GFile *file, GAppLaunchContext *context, GError **error)
+{
+ char *path = g_file_get_path(file);
+ if (path && g_str_has_suffix(path, ".desktop") && !g_file_test(path, G_FILE_TEST_IS_DIR)) {
+  GDesktopAppInfo *app = g_desktop_app_info_new_from_filename(path);
+  if (app) {
+   gboolean ok = g_app_info_launch(G_APP_INFO(app), NULL, context, error);
+   g_object_unref(app); g_free(path); return ok;
+  }
+  GKeyFile *entry = g_key_file_new();
+  gboolean ok = FALSE;
+  if (g_key_file_load_from_file(entry, path, G_KEY_FILE_NONE, error)) {
+   char *type = g_key_file_get_string(entry, "Desktop Entry", "Type", NULL);
+   char *url = !g_strcmp0(type, "Link") ? g_key_file_get_string(entry, "Desktop Entry", "URL", NULL) : NULL;
+   if (url && *url) ok = g_app_info_launch_default_for_uri(url, context, error);
+   else g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "This desktop launcher is invalid or its application is not installed.");
+   g_free(type); g_free(url);
+  }
+  g_key_file_unref(entry); g_free(path); return ok;
+ }
+ g_free(path);
+ char *uri = g_file_get_uri(file);
+ gboolean ok = g_app_info_launch_default_for_uri(uri, context, error);
+ g_free(uri); return ok;
 }
 GPtrArray *desktop_files_list(GFile *folder, GCancellable *cancel, GError **error)
 {
@@ -22,6 +48,17 @@ GPtrArray *desktop_files_list(GFile *folder, GCancellable *cancel, GError **erro
    item->label = g_strdup(g_file_info_get_display_name(info));
    item->directory = g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
    GIcon *icon = g_file_info_get_icon(info); item->icon = icon ? g_object_ref(icon) : NULL;
+   if (!item->directory && g_str_has_suffix(g_file_info_get_name(info), ".desktop")) {
+    char *path = g_file_get_path(item->file);
+    GDesktopAppInfo *app = path ? g_desktop_app_info_new_from_filename(path) : NULL;
+    if (app) {
+     g_free(item->label); item->label = g_strdup(g_app_info_get_display_name(G_APP_INFO(app)));
+     icon = g_app_info_get_icon(G_APP_INFO(app));
+     if (icon) g_set_object(&item->icon, icon);
+     g_object_unref(app);
+    }
+    g_free(path);
+   }
    item->size = g_file_info_get_size(info); item->modified = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
    g_ptr_array_add(items, item);
   }

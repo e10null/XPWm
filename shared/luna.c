@@ -216,6 +216,9 @@ int luna_init(void)
 	 * diagnostic trail so a session log proves which font was selected. */
 	FcConfigBuildFonts(NULL);
 	report_font("Tahoma");
+	report_font("Arial");
+	report_font("Courier New");
+	report_font("Times New Roman");
 	report_font("Tahoma:style=Bold");
 	report_font("Trebuchet MS");
 	report_font("Trebuchet MS:style=Bold");

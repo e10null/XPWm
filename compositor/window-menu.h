@@ -11,7 +11,7 @@ system_enabled(Client *c)
 {
  unsigned int mask = (1u << 5);
  if (c->maximized || c->minimized) mask |= 1u;
- if (!c->maximized && !c->minimized) {
+ if (!c->maximized && !c->minimized && client_manual_geometry(c)) {
   mask |= 1u << 1;
   if (client_resize_edges(c)) mask |= 1u << 2;
  }

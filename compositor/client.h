@@ -453,3 +453,11 @@ client_wants_fullscreen(Client *c)
 #endif
 	return c->surface.xdg->toplevel->requested.fullscreen;
 }
+
+/* Ordinary windows cannot escape the WM layout through geometry controls. */
+static inline int
+client_manual_geometry(Client *c)
+{
+ return c && c->mon && (!c->mon->lt[c->mon->sellt]->arrange
+  || client_get_parent(c) || client_is_float_type(c));
+}

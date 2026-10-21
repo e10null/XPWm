@@ -34,6 +34,7 @@ static void style_tree(GtkWidget *widget, gpointer data)
 
 void xp_style_apply(GtkWidget *root)
 {
+ g_object_set(gtk_widget_get_settings(root),"gtk-font-name","Tahoma 8","gtk-xft-dpi",96*1024,NULL);
 	static GtkCssProvider *provider;
 	if (!provider) {
 		provider = gtk_css_provider_new();

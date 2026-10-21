@@ -24,6 +24,30 @@ int main(void)
  char *path = g_dir_make_tmp("xpwm-files-test-XXXXXX", NULL), *data = g_build_filename(path, "data", NULL);
  g_setenv("XDG_DATA_HOME", data, TRUE);
  GFile *root = g_file_new_for_path(path), *src = child(root, "source"), *dst = child(root, "destination");
+ /* Launch .desktop files as application entries, regardless of document MIME
+  * associations. A path with spaces exercises desktop-entry Exec quoting. */
+ GFile *launchers = child(root, "launchers"), *launcher = child(launchers, "Example.desktop");
+ GFile *program = child(root, "launch target.sh"), *marker = child(root, "launched");
+ g_assert_true(g_file_make_directory(launchers, NULL, NULL));
+ content(program, "#!/bin/sh\nprintf launched > \"$1\"\n");
+ g_assert_true(g_file_set_attribute_uint32(program, G_FILE_ATTRIBUTE_UNIX_MODE, 0700, 0, NULL, NULL));
+ char *program_path = g_file_get_path(program), *marker_path = g_file_get_path(marker);
+ char *entry = g_strdup_printf("[Desktop Entry]\nType=Application\nName=Launch Test\nIcon=utilities-terminal\nExec=\"%s\" \"%s\"\nTerminal=false\n", program_path, marker_path);
+ content(launcher, entry); g_free(entry); g_free(program_path); g_free(marker_path);
+ GError *launch_error = NULL;
+ g_assert_true(desktop_file_launch(launcher, NULL, &launch_error)); g_assert_no_error(launch_error);
+ for (int attempt = 0; attempt < 100 && !g_file_query_exists(marker, NULL); attempt++) g_usleep(10000);
+ assert_content(marker, "launched");
+ GPtrArray *launch_list = desktop_files_list(launchers, NULL, &launch_error);
+ g_assert_no_error(launch_error); g_assert_cmpuint(launch_list->len, ==, 1);
+ DesktopFile *shortcut = g_ptr_array_index(launch_list, 0);
+ g_assert_cmpstr(shortcut->label, ==, "Launch Test"); g_assert_nonnull(shortcut->icon);
+ g_ptr_array_unref(launch_list);
+ content(launcher, "[Desktop Entry]\nType=Application\nName=Invalid launcher\n");
+ g_assert_false(desktop_file_launch(launcher, NULL, &launch_error));
+ g_assert_nonnull(launch_error); g_clear_error(&launch_error);
+ g_object_unref(launchers); g_object_unref(launcher); g_object_unref(program); g_object_unref(marker);
+ g_print("PASS: desktop application launch, Exec paths with spaces, application name/icon and invalid-launcher errors\n");
  g_assert_true(g_file_make_directory(src, NULL, NULL)); g_assert_true(g_file_make_directory(dst, NULL, NULL));
  GFile *a = child(src, "Report One.txt"), *b = child(src, "Other.txt"), *hidden = child(src, ".hidden");
  content(a, "original"); content(b, "existing"); content(hidden, "hidden");

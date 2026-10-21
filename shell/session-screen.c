@@ -18,6 +18,9 @@ static enum XpwmSessionScreenMode screen_mode;
 static gboolean selected, finishing, accepting, password_prompt, hovered;
 static char *username;
 static guint timeout_id;
+static guint logoff_delay = 1200;
+static gboolean preview_only;
+static gboolean logoff_timeout(gpointer data);
 
 static void finish_logon(void);
 
@@ -38,146 +41,30 @@ static gboolean auto_logon(gpointer data)
 	return G_SOURCE_REMOVE;
 }
 
-static void text(cairo_t *cr, const char *value, double x, double y, double width,
-		const char *font, PangoAlignment alignment)
-{
-	PangoLayout *layout = pango_cairo_create_layout(cr);
-	PangoFontDescription *description = pango_font_description_from_string(font);
-	pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96);
-	pango_layout_set_font_description(layout, description);
-	pango_layout_set_text(layout, value ? value : "", -1);
-	pango_layout_set_width(layout, MAX(1, (int)width) * PANGO_SCALE);
-	pango_layout_set_alignment(layout, alignment);
-	pango_layout_set_single_paragraph_mode(layout, TRUE);
-	cairo_new_path(cr); cairo_move_to(cr, x, y); pango_cairo_show_layout(cr, layout);
-	pango_font_description_free(description); g_object_unref(layout);
-}
-
-static void xp_logo(cairo_t *cr, double x, double y, double scale)
-{
-	static const double colors[4][3] = {
-		{.88, .12, .10}, {.15, .70, .18}, {.10, .35, .85}, {.96, .72, .08}
-	};
-	cairo_save(cr); cairo_translate(cr, x, y); cairo_scale(cr, scale, scale);
-	for (int i = 0; i < 4; i++) {
-		double ox = (i & 1) * 18, oy = (i / 2) * 18;
-		cairo_set_source_rgb(cr, colors[i][0], colors[i][1], colors[i][2]);
-		cairo_move_to(cr, ox, oy + (i / 2 ? 1 : 0));
-		cairo_line_to(cr, ox + 16, oy); cairo_line_to(cr, ox + 16, oy + 16);
-		cairo_line_to(cr, ox, oy + (i / 2 ? 15 : 16)); cairo_close_path(cr); cairo_fill(cr);
-	}
-	cairo_restore(cr);
-}
-
-/* Geometry and colors follow LogonUI's UIFILE 1000, not the Luna desktop.
- * Top band: 80rp. Footer: 20rp padding + two instruction lines + divider. */
-static int content_middle(int height) { return (80 + height - 74) / 2; }
-static int account_x(int width) { return width / 2 + 26; }
-static int account_y(int height) { return content_middle(height) - 40; }
-
-static void background(cairo_t *cr, int width, int height)
-{
-	cairo_pattern_t *gradient;
-	cairo_set_source_rgb(cr, 90/255., 126/255., 220/255.); cairo_paint(cr);
-	cairo_save(cr); cairo_rectangle(cr, 0, 80, width, MAX(1, height-154)); cairo_clip(cr);
-	xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-100-1033.png", 0, 80);
-	cairo_restore(cr);
-	cairo_set_source_rgb(cr, 0, 48/255., 156/255.);
-	cairo_rectangle(cr, 0, 0, width, 80); cairo_fill(cr);
-	gradient = cairo_pattern_create_linear(0, 0, width, 0);
-	cairo_pattern_add_color_stop_rgb(gradient, 0, 57/255., 52/255., 173/255.);
-	cairo_pattern_add_color_stop_rgb(gradient, 1, 0, 48/255., 156/255.);
-	cairo_set_source(cr, gradient); cairo_rectangle(cr, 0, height-74, width, 74); cairo_fill(cr);
-	cairo_pattern_destroy(gradient);
-	cairo_save(cr); cairo_scale(cr, width/800., 1);
-	xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-125-1033.png", 0, 78);
-	xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-126-1033.png", 0, height-74);
-	cairo_restore(cr);
-}
-
-static void fallback_user(cairo_t *cr, double x, double y)
-{
-	cairo_set_source_rgb(cr, .78, .86, .96); cairo_arc(cr, x + 24, y + 17, 9, 0, 2 * G_PI); cairo_fill(cr);
-	cairo_set_source_rgb(cr, .35, .55, .78); cairo_arc(cr, x + 24, y + 43, 18, G_PI, 2 * G_PI); cairo_fill(cr);
-}
-
-static void product(cairo_t *cr, double x, double y)
-{
-	if (xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-123-1033.png", x, y)) return;
-	xp_logo(cr, x+53, y, 1.6);
-	cairo_set_source_rgb(cr, 1, 1, 1);
-	text(cr, "Microsoft", x, y+52, 137, "Arial 7", PANGO_ALIGN_LEFT);
-	text(cr, "Windows", x, y+61, 137, "Arial Bold 20", PANGO_ALIGN_LEFT);
-}
-
-static void user_tile(cairo_t *cr, int width, int height)
-{
-	int x = account_x(width), y = account_y(height);
-	if (selected) xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-112-1033.png", x, y);
-	if (!xp_bitmap(cr, (selected || hovered) ? "xp-bitmaps/logonui.exe-BITMAP-119-1033.png" :
-			"xp-bitmaps/logonui.exe-BITMAP-113-1033.png", x+7, y+7)) {
-		cairo_set_source_rgb(cr, 1, 1, .9); cairo_rectangle(cr, x+7, y+7, 58, 58); cairo_fill(cr);
-	}
-	if (!xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-114-1033.png", x+12, y+12))
-		fallback_user(cr, x+12, y+12);
-	cairo_set_source_rgb(cr, 239/255., 247/255., 1);
-	text(cr, username, x+72, y+18, MAX(1, width-x-90), "Tahoma 14", PANGO_ALIGN_LEFT);
-	if (selected && password_prompt)
-		text(cr, "Type your password", x+74, y+49, 230, "Arial 8", PANGO_ALIGN_LEFT);
-}
-
-static void draw_logon(cairo_t *cr, int width, int height)
-{
-	int middle = content_middle(height), split = width/2;
-	background(cr, width, height);
-	if (accepting) {
-		cairo_set_source_rgb(cr, 49/255., 81/255., 181/255.);
-		text(cr, "welcome", split-264, middle-30+3, 244, "Arial Bold Italic 36", PANGO_ALIGN_RIGHT);
-		cairo_set_source_rgb(cr, 239/255., 247/255., 1);
-		text(cr, "welcome", split-266, middle-30, 244, "Arial Bold Italic 36", PANGO_ALIGN_RIGHT);
-		return;
-	}
-	product(cr, split-157, middle-70);
-	cairo_set_source_rgb(cr, 239/255., 247/255., 1);
-	text(cr, "To begin, click your user name", MAX(0, split-384), middle+36,
-		MIN(344, split-16), "Arial 14", PANGO_ALIGN_RIGHT);
-	if (!xp_bitmap(cr, "xp-bitmaps/logonui.exe-BITMAP-124-1033.png", split, middle-170)) {
-		cairo_set_source_rgba(cr, 1, 1, 1, .3); cairo_rectangle(cr, split, middle-170, 1, 340); cairo_fill(cr);
-	}
-	user_tile(cr, width, height);
-	cairo_set_source_rgb(cr, 1, 1, 1);
-	if (width >= 720) {
-		text(cr, "After you log on, you can add or change accounts.", width-350, height-52,
-			325, "Tahoma 9", PANGO_ALIGN_LEFT);
-		text(cr, "Just go to Control Panel and click User Accounts.", width-350, height-37,
-			325, "Tahoma 9", PANGO_ALIGN_LEFT);
-	}
-}
-
-static void draw_logoff(cairo_t *cr, int width, int height)
-{
-	int middle = content_middle(height);
-	background(cr, width, height);
-	product(cr, width/2-69, middle-77);
-	cairo_set_source_rgb(cr, 239/255., 247/255., 1);
-	text(cr, "Logging off...", width/2-190, middle+30, 380, "Tahoma 10", PANGO_ALIGN_CENTER);
-}
+#include "../shared/session-art.h"
 
 static gboolean draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 {
 	int width = gtk_widget_get_allocated_width(widget), height = gtk_widget_get_allocated_height(widget);
-	if (screen_mode == XPWM_SCREEN_LOGON) draw_logon(cr, width, height);
-	else draw_logoff(cr, width, height);
+	if (screen_mode == XPWM_SCREEN_LOGON) {
+  XpSessionArt art={username,selected,hovered,accepting,password_prompt,FALSE};
+  xp_session_draw_logon(cr, width, height, &art);
+ }
+	else {
+  xp_session_draw_logoff(cr, width, height);
+  /* Start the visible dwell time after the first configured frame. */
+  if (!timeout_id && !finishing) timeout_id = g_timeout_add(logoff_delay, logoff_timeout, NULL);
+ }
 	return FALSE;
 }
 
 static void place_controls(GtkWidget *widget, GtkAllocation *allocation, gpointer data)
 {
-	int x = account_x(allocation->width)+74, y = account_y(allocation->height)+68;
+	int x = xp_session_account_x(allocation->width)+74, y = xp_session_account_y(allocation->height)+68;
 	gtk_fixed_move(GTK_FIXED(fixed), password, x, y);
 	gtk_fixed_move(GTK_FIXED(fixed), login_button, x+168, y);
 	gtk_fixed_move(GTK_FIXED(fixed), power_button, 25, allocation->height-54);
-	gtk_fixed_move(GTK_FIXED(fixed), account_button, account_x(allocation->width), account_y(allocation->height));
+	gtk_fixed_move(GTK_FIXED(fixed), account_button, xp_session_account_x(allocation->width), xp_session_account_y(allocation->height));
 }
 
 static void choose_user(void)
@@ -227,7 +114,7 @@ static gboolean go_draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 	if (!xp_bitmap(cr, hot ? "xp-bitmaps/logonui.exe-BITMAP-104-1033.png" :
 			"xp-bitmaps/logonui.exe-BITMAP-103-1033.png", 0, 0)) {
 		cairo_set_source_rgb(cr, .2, .65, .15); cairo_paint(cr);
-		cairo_set_source_rgb(cr, 1, 1, 1); text(cr, "→", 2, 0, 24, "Arial Bold 14", PANGO_ALIGN_CENTER);
+		cairo_set_source_rgb(cr, 1, 1, 1); xp_session_text(cr, "→", 2, 0, 24, "Arial Bold 14", PANGO_ALIGN_CENTER);
 	}
 	return FALSE;
 }
@@ -238,14 +125,14 @@ static gboolean power_draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 		cairo_set_source_rgb(cr, .85, .2, .1); cairo_rectangle(cr, 0, 0, 26, 26); cairo_fill(cr);
 	}
 	cairo_set_source_rgb(cr, 1, 1, 1);
-	text(cr, "Turn off computer", 32, 2, 215, "Tahoma 14", PANGO_ALIGN_LEFT);
+	xp_session_text(cr, "Turn off computer", 32, 2, 215, "Tahoma 14", PANGO_ALIGN_LEFT);
 	return FALSE;
 }
 
 static gboolean canvas_button(GtkWidget *widget, GdkEventButton *event, gpointer data)
 {
 	int width = gtk_widget_get_allocated_width(widget), height = gtk_widget_get_allocated_height(widget);
-	int x = account_x(width), y = account_y(height);
+	int x = xp_session_account_x(width), y = xp_session_account_y(height);
 	if (screen_mode != XPWM_SCREEN_LOGON || event->button != 1 || event->type != GDK_BUTTON_PRESS) return FALSE;
 	if (event->x >= x && event->x < x + MIN(308, width-x) && event->y >= y && event->y < y + 80) {
 		choose_user(); return TRUE;
@@ -275,7 +162,7 @@ static gboolean logoff_timeout(gpointer data)
 	timeout_id = 0;
 	if (finishing) return G_SOURCE_REMOVE;
 	finishing = TRUE;
-	if (g_getenv("XPWM_SESSION_DRY_RUN")) write_marker("logoff");
+	if (preview_only || g_getenv("XPWM_SESSION_DRY_RUN")) write_marker("logoff");
 	else {
 		g_snprintf(uid, sizeof(uid), "%u", (unsigned)getuid());
 		argv[0] = "loginctl"; argv[1] = "terminate-user"; argv[2] = uid; argv[3] = NULL;
@@ -295,8 +182,14 @@ int xpwm_session_screen_run(enum XpwmSessionScreenMode mode, int argc, char **ar
 {
 	GtkCssProvider *css;
 	GtkWidget *overlay;
+ GPtrArray *extra_windows = g_ptr_array_new();
 	const char *name;
-	(void)argc; (void)argv;
+	for (int i=1;i<argc;i++) if (!strcmp(argv[i],"--preview")) preview_only=TRUE;
+ if (mode == XPWM_SCREEN_LOGOFF) {
+  const char *value=g_getenv("XPWM_LOGOFF_DELAY_MS");
+  logoff_delay=preview_only ? 3000 : 1200;
+  if(value && *value) logoff_delay=CLAMP((guint)g_ascii_strtoull(value,NULL,10),1,60000);
+ }
 	screen_mode = mode;
 	password_prompt = g_getenv("XPWM_LOGON_PASSWORD_PROMPT") != NULL;
 	name = g_get_real_name();
@@ -311,8 +204,7 @@ int xpwm_session_screen_run(enum XpwmSessionScreenMode mode, int argc, char **ar
 	gtk_layer_init_for_window(GTK_WINDOW(window));
 	gtk_layer_set_namespace(GTK_WINDOW(window), mode == XPWM_SCREEN_LOGON ? "xpwm-logon" : "xpwm-logoff");
 	gtk_layer_set_layer(GTK_WINDOW(window), GTK_LAYER_SHELL_LAYER_OVERLAY);
-	gtk_layer_set_keyboard_mode(GTK_WINDOW(window), mode == XPWM_SCREEN_LOGON ?
-		GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE : GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
+	gtk_layer_set_keyboard_mode(GTK_WINDOW(window), GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
 	gtk_layer_set_anchor(GTK_WINDOW(window), GTK_LAYER_SHELL_EDGE_TOP, TRUE);
 	gtk_layer_set_anchor(GTK_WINDOW(window), GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
 	gtk_layer_set_anchor(GTK_WINDOW(window), GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
@@ -363,11 +255,24 @@ int xpwm_session_screen_run(enum XpwmSessionScreenMode mode, int argc, char **ar
 	if (mode == XPWM_SCREEN_LOGON) {
 		xp_sound_play(XPWM_SOUND_STARTUP);
 		if (g_getenv("XPWM_LOGON_AUTO")) timeout_id = g_timeout_add(120, auto_logon, NULL);
-	} else {
-		guint delay = 1200; const char *value = g_getenv("XPWM_LOGOFF_DELAY_MS");
-		if (value && *value) delay = CLAMP((guint)g_ascii_strtoull(value, NULL, 10), 1, 60000);
-		timeout_id = g_timeout_add(delay, logoff_timeout, NULL);
 	}
+	if (mode == XPWM_SCREEN_LOGOFF) {
+  GdkDisplay *display=gdk_display_get_default();
+  GdkMonitor *primary=gdk_display_get_primary_monitor(display);
+  if(!primary) primary=gdk_display_get_monitor(display,0);
+  gtk_layer_set_monitor(GTK_WINDOW(window),primary);
+  for(int i=0;i<gdk_display_get_n_monitors(display);i++) {
+   GdkMonitor *monitor=gdk_display_get_monitor(display,i);
+   if(monitor==primary) continue;
+   GtkWidget *extra=gtk_window_new(GTK_WINDOW_TOPLEVEL),*view=gtk_drawing_area_new();
+   gtk_layer_init_for_window(GTK_WINDOW(extra));gtk_layer_set_namespace(GTK_WINDOW(extra),"xpwm-logoff");
+   gtk_layer_set_monitor(GTK_WINDOW(extra),monitor);gtk_layer_set_layer(GTK_WINDOW(extra),GTK_LAYER_SHELL_LAYER_OVERLAY);
+   gtk_layer_set_exclusive_zone(GTK_WINDOW(extra),-1);
+   for(int edge=0;edge<GTK_LAYER_SHELL_EDGE_ENTRY_NUMBER;edge++)gtk_layer_set_anchor(GTK_WINDOW(extra),edge,TRUE);
+   gtk_container_add(GTK_CONTAINER(extra),view);g_signal_connect(view,"draw",G_CALLBACK(draw),NULL);
+   gtk_widget_show_all(extra);g_ptr_array_add(extra_windows,extra);
+  }
+ }
 	gtk_widget_show_all(window);
 	if (mode == XPWM_SCREEN_LOGOFF) xp_sound_play(XPWM_SOUND_LOGOFF);
 	if (mode == XPWM_SCREEN_LOGON) {
@@ -375,6 +280,8 @@ int xpwm_session_screen_run(enum XpwmSessionScreenMode mode, int argc, char **ar
 	}
 	gtk_main();
 	if (timeout_id) g_source_remove(timeout_id);
+	for(guint i=0;i<extra_windows->len;i++)gtk_widget_destroy(g_ptr_array_index(extra_windows,i));
+ g_ptr_array_unref(extra_windows);
 	gtk_widget_destroy(window); g_free(username); luna_finish();
 	return 0;
 }

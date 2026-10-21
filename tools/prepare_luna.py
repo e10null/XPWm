@@ -30,7 +30,9 @@ ROLES = {
     'task-button': ('TaskBand::Toolbar.Button', 'ImageFile'),
     'tray': ('TrayNotifyHoriz::TrayNotify.Background', 'ImageFile'),
 }
-FONTS = ['TREBUC', 'TREBUCBD', 'TAHOMA', 'TAHOMABD', 'FRAMD', 'FRAMDIT']
+FONTS = ['TREBUC', 'TREBUCBD', 'TAHOMA', 'TAHOMABD', 'FRAMD', 'FRAMDIT',
+         'ARIAL', 'ARIALBD', 'ARIALI', 'ARIALBI', 'COUR', 'COURBD', 'COURI', 'COURBI',
+         'TIMES', 'TIMESBD', 'TIMESI', 'TIMESBI']
 
 
 def decode_rle8(data, width, height):
@@ -176,6 +178,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('extracted', type=Path)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--iso', type=Path, help='Optionally extract the six required font faces locally')
+    parser.add_argument('--iso', type=Path, help='Optionally extract the XP UI, serif and monospace font faces locally')
     args = parser.parse_args()
     prepare(args.extracted, args.output, args.iso)

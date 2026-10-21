@@ -22,6 +22,15 @@ fi
 if [ -f "$xpwm_assets_root/assets/local/share/fontconfig/fonts.conf" ]; then
     export FONTCONFIG_FILE="$xpwm_assets_root/assets/local/share/fontconfig/fonts.conf"
 fi
+# Rebuild with the current asset location: imported configs may reference an
+# old checkout. Generic fonts apply to cooperating GTK, Qt and terminal clients.
+if [ -d "${XDG_RUNTIME_DIR:-}" ] && [ -d "$xpwm_assets_root/assets/local/luna-blue-complete/fonts" ]; then
+    xpwm_font_config="$XDG_RUNTIME_DIR/xpwm/fontconfig/fonts.conf"
+    if python3 "$xpwm_theme_root/tools/session_fonts.py" "$xpwm_assets_root/assets/local/luna-blue-complete/fonts" "$xpwm_font_config"; then
+        export FONTCONFIG_FILE="$xpwm_font_config"
+    fi
+    unset xpwm_font_config
+fi
 export XPWM_GTK_CSS="$xpwm_theme_root/themes/XPWm-Luna/gtk-3.0/gtk.css"
 if [ -f "$xpwm_assets_root/assets/local/share/themes/XPWm-Luna/gtk-3.0/gtk.css" ]; then
     export XPWM_GTK_CSS="$xpwm_assets_root/assets/local/share/themes/XPWm-Luna/gtk-3.0/gtk.css"

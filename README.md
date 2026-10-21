@@ -63,6 +63,9 @@ Other distributions can install the build dependencies below manually and run
 `./install.sh` without `--deps`. Python 3.11+ is required. Dependency recipes for
 other distributions are not a claim that they have been tested on real hardware.
 Optional desktop apps and ISO extraction tools are installed separately.
+The XP-themed locker additionally requires Meson, Ninja, Wayland cursor headers,
+and PAM development headers. It builds a presentation variant of swaylock 1.8.6;
+its PAM backend and session-lock protocol remain upstream.
 
 Most display managers only discover system session files. For a system-wide
 installation and login-screen session entry:
@@ -181,7 +184,15 @@ The notification area has volume/mute controls (`wpctl` from WirePlumber),
 network status and a Wi-Fi switch (`nmcli` from NetworkManager), a clickable
 clock/calendar, and a power meter when a battery is present. Scroll over the
 speaker to adjust volume. Single-click the speaker for the compact vertical
-volume popup, double-click for the mixer, and right-click for its XP-style menu.
+volume popup with −/+ buttons and a mute checkbox, double-click for the mixer,
+and right-click for its XP-style menu. With `pactl` installed, audio-server
+events update the slider and mute state promptly after physical volume-key
+presses; periodic polling remains a fallback for unavailable services.
+On systems with a backlight, the original XP Display icon
+opens screen brightness controls with −/+ buttons and a slider; scrolling over
+the Display icon adjusts brightness in 10% steps. Brightness uses `brightnessctl` when
+available, or `gdbus` with logind/elogind's backlight API. Controls keep at least
+1% brightness and report permission failures without requiring a root desktop.
 Click the network icon for its
 XP-styled controls. Optional `pavucontrol` and `nm-connection-editor` provide
 advanced audio and connection settings. Missing services appear unavailable.
@@ -218,6 +229,11 @@ Browse and inline launch errors. It uses the XP instruction text, resource icon 
 semantics are not yet XP-exact; see [shell notes](shell/README.md).
 See [decoration notes](docs/DECORATIONS.md) for provisional metrics
 and remaining limitations.
+Run keeps its compact XP dialog size and shows a dropdown only while typing,
+listing executable commands from PATH and previous successful commands.
+Type to filter with prefix or fuzzy matching; use Up/Down to select, Tab to fill
+in a command (then add arguments), and Enter or a click to launch. Escape closes Run. Discovery runs in the
+background each time Run opens. The original history dropdown remains available.
 
 From an existing Wayland session, launch an isolated nested desktop:
 
@@ -244,10 +260,14 @@ This does not install anything or replace your current desktop. foot is the
 terminal for the VT example. Bindings now follow your Hyprland configuration:
 Super+Return opens a Command Prompt-style terminal; Super+E opens thunar; Super+D or Super+R opens the native XP Run dialog; Super+left/right drag moves/resizes windows; Super+F toggles fullscreen;
 Super+Shift+Q closes a window; Super+Shift+M exits. Super+Shift+Space toggles
-WM Mode/Floating Mode. WM Mode tiles ordinary windows, including windows
+WM Mode/Floating Mode. Tap either Windows/Super key to open or close Start;
+using it in a keyboard or mouse shortcut does not open Start afterward.
+WM Mode tiles ordinary windows, including windows
 previously dragged into floating state. Floating Mode restores saved positions
 and sizes. Dialogs, fullscreen and maximized windows are exempt. Modes are per
-monitor and reset to Floating Mode at startup.
+monitor and saved automatically in `~/.config/xpwm/layouts.ini` (or under
+`$XDG_CONFIG_HOME/xpwm`). Each monitor restores its last mode at the next login;
+monitors without a saved preference start in Floating Mode.
 See [KEYBINDINGS.md](KEYBINDINGS.md) for the complete
 mapping and pending Hyprland-specific features. In nested mode the host may
 intercept keys. These personal bindings take precedence over XP shortcut fidelity.
@@ -308,6 +328,10 @@ Desktop files come from your XDG Desktop folder. Select with Ctrl/Shift or a
 selection rectangle; drag to reposition, use F2 to rename, Delete to send to
 trash, and Ctrl+C/X/V to copy or move files. The context menu adds New Folder,
 sorting, Auto Arrange and Align to Grid. Positions persist between sessions.
+Arrange Icons By → Align Vertically / Align Horizontally chooses whether icons
+fill columns or rows. Changing this preference arranges the existing icons and
+saves the layout. Local `.desktop` shortcuts launch their application directly,
+using the entry's name, icon and launch command, rather than document associations.
 Incoming file drops copy into Desktop or a folder icon. File operations are
 cancellable; completed files and partial copies remain after cancellation.
 
@@ -321,5 +345,85 @@ button to choose a window; right-click for Restore Group, Minimize Group or Clos
 Group. Taskbar Properties → Group similar taskbar buttons controls this behavior
 and saves your preference. Groups expand automatically when there is room.
 
+Taskbar Properties → Window behavior → Activation follows mouse (X-Mouse)
+enables focus on hover without raising windows. The default is click-to-focus.
+Apply updates the behavior during the session; Cancel discards unsaved changes.
+The preference is stored in `xpwm/taskbar.ini` under `[Windows]` as
+`FocusFollowsMouse=true` within your XDG configuration directory.
+
+Volume and brightness keys do not display an automatic overlay: the standard XP
+desktop did not provide the Windows 10-style indicator. XP-era overlays came
+from vendor software such as [Lenovo Hotkey Features Integration](https://support.lenovo.com/ao/en/downloads/ds101335-hotkey-features-integration-for-windows-xp-thinkpad)
+and [Dell QuickSet](https://www.dell.com/support/home/en-us/drivers/driversdetails?driverid=6ym7c).
+
+Desktop → Properties → Screen Saver offers native recreations of XP’s 3D
+FlowerBox, 3D Flying Objects, 3D Pipes, 3D Text, Beziers, Blank, Marquee,
+My Pictures Slideshow, Mystify, Starfield, and Windows XP logo saver.
+Gentoo ASCII DVD uses Fastfetch’s purple/white logo in XP Courier New. It bounces around
+the screen and changes colors at each edge. Choose a
+saver and wait time, then Apply; Preview tries it immediately. Text and slideshow
+folder settings also persist in `~/.config/xpwm/screensaver.ini`. The default is
+(None). These are native Cairo renderers with no Wine dependency. The renderer
+runs only while active, respects idle inhibitors, and dismisses on input.
+Hidden settings previews stop animating; slideshow images load off the UI thread.
+Animation follows the display frame clock at approximately 30 fps. Pipes grow
+continuously with cached completed segments; software effects use a bounded pixel
+budget on large displays.
+
+Secure locking requires `swaylock` with working system authentication. On Gentoo,
+run `sh platforms/gentoo/setup-lock.sh` once to install it through Portage and PAM.
+Super+Shift+L (also Ctrl+Alt+L) runs the locker directly, rather than sending a
+`loginctl` notification without a listening locker. It uses Wayland session-lock;
+a locker crash leaves the compositor locked. Unlock with your Linux account
+password. The bundled `xpwm-lock` renderer shares the original LogonUI artwork
+and typography with the Welcome screen: account tile, masked password box, green
+submit arrow, Caps Lock and authentication feedback. Authentication uses the
+system `swaylock` PAM service. The Welcome screen at session startup follows the
+Linux login; it does not replace display-manager authentication. Display Properties → Screen Saver → “Lock automatically” enables a separate
+lock timeout (default 15 minutes), including with saver (None). The saver can
+start earlier using its own wait time. At the lock timeout the secure password
+screen takes over; it stops the saver only after the session lock is acquired.
+Unlocking resets both timers. Automatic locking respects idle inhibitors.
+Preview remains a dismissible visual preview. This setting defaults off and is
+saved with the screen saver settings. Suspend/resume locking is not configured by
+this setting.
+
 See [local resource measurements](docs/PERFORMANCE.md) for RAM, idle CPU, startup
 timings and the reproducible isolated profiling commands.
+
+Start → Log Off and Super+Shift+M show the XP blue “Logging off...” screen
+before ending the session. It covers every connected monitor. To preview the
+screen without logging off, run `~/.local/lib/xpwm/shell/xpwm-logoff --preview`.
+
+GTK interfaces use the imported XP Tahoma and Arial faces, with 96-DPI font
+metrics matching the native captions; monitor scaling remains separate. Terminal monospace
+preferences remain unchanged; the Gentoo saver explicitly uses XP Courier New. The font configuration follows the current private asset location and only
+affects XPWm’s session. Apps with an explicit custom font retain that preference.
+
+Print Screen captures the full desktop. Super+Shift+S (or Super+Shift+F) opens
+an XP-style area selector; drag to select, or press Escape/right-click to cancel.
+The native `xpwm-screenshot` tool saves PNGs in your XDG Pictures/Screenshots
+folder and copies the image to the clipboard, without grim, slurp or Hyprland
+scripts. A clipboard helper retains the compressed image until the clipboard is
+replaced. Use `xpwm-screenshot --no-clipboard` to save only, `--area` for selection,
+or `--output /path/to/image.png` to choose a filename.
+
+Tray battery images come from XP `BATMETER.DLL`, bitmap 301, at their original
+16px size with the original magenta transparency key. Brightness uses the
+original `DESK.CPL` Display icon (group 100), rather than a custom sun drawing.
+Asset provenance and source hashes are recorded in the private `xp-tray/index.json`.
+
+Right-click an application in All Programs or the Start shortcuts to choose
+Pin to Start / Unpin from Start, or Add to Desktop. Up to eight custom pins
+persist by desktop-entry ID in `~/.config/xpwm/start-pins.ini`. Reopening Start
+shows changes; removed/uninstalled applications are omitted. Desktop shortcuts
+copy the application's original `.desktop` entry into the XDG Desktop folder,
+preserving its launch metadata and refusing to overwrite an existing file.
+
+Night Light is available under desktop right-click → Properties → Night Light.
+Install `wlsunset` separately (Gentoo: `doas emerge --ask gui-apps/wlsunset`).
+Enable it and click Apply; the default schedule is 19:00–07:00 local time,
+with 4000 K at night and 6500 K by day, fading over 30 minutes. The toggle,
+hours, and temperature are saved in `~/.config/xpwm/night-light.ini` and restored
+at login. It uses the compositor gamma-control protocol; nested sessions depend
+on the host compositor/output supporting gamma changes.

@@ -48,7 +48,7 @@ static const MonitorRule monrules[] = {
 	{ "eDP-1",    0.5f,  1,      2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 	*/
 	/* defaults */
-	{ NULL,       0.55f, 1,      1,    &layouts[1], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
+	{ NULL,       0.5f,  1,      1,    &layouts[1], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 };
 
 /* keyboard */
@@ -113,28 +113,28 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
 static const Key keys[] = {
-	{ 0, XKB_KEY_Print, spawn, SHCMD("\"$HOME/.config/hypr/scripts/screenshot.sh\" full") },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_S, spawn, SHCMD("\"$HOME/.config/hypr/scripts/screenshot.sh\" area") },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_F, spawn, SHCMD("grim -g \"$(slurp)\" - | tee ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png | wl-copy") },
+	{ 0, XKB_KEY_Print, spawn, SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-screenshot\"") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_S, spawn, SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-screenshot\" --area") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_F, spawn, SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-screenshot\" --area") },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_X, spawn, SHCMD("hyprpicker -a") },
-	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT, XKB_KEY_l, spawn, SHCMD("loginctl lock-session") },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_L, spawn, SHCMD("loginctl lock-session") },
+	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT, XKB_KEY_l, spawn, SHCMD("exec sh \"$XPWM_PROJECT_ROOT/tools/lock.sh\"") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_L, spawn, SHCMD("exec sh \"$XPWM_PROJECT_ROOT/tools/lock.sh\"") },
 	{ MODKEY, XKB_KEY_Return, spawn, SHCMD("sh \"${XPWM_PROJECT_ROOT:-.}/tools/command-prompt.sh\"") },
 	{ MODKEY, XKB_KEY_e, spawn, SHCMD("thunar") },
 	{ MODKEY, XKB_KEY_r, spawn, SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-run\"") },
 	{ MODKEY, XKB_KEY_d, spawn, SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-run\"") },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_D, spawn, SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-run\"") },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_B, spawn, SHCMD("pkill -HUP quickshell") },
-	{ 0, XKB_KEY_XF86AudioRaiseVolume, spawn, SHCMD("wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%+") },
-	{ 0, XKB_KEY_XF86AudioLowerVolume, spawn, SHCMD("wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%-") },
+	{ 0, XKB_KEY_XF86AudioRaiseVolume, spawn, SHCMD("wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 && wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+") },
+	{ 0, XKB_KEY_XF86AudioLowerVolume, spawn, SHCMD("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%-") },
 	{ 0, XKB_KEY_XF86AudioMute, spawn, SHCMD("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle") },
-	{ 0, XKB_KEY_XF86AudioMicMute, spawn, SHCMD("pactl -- set-source-mute 0 toggle") },
-	{ 0, XKB_KEY_XF86MonBrightnessDown, spawn, SHCMD("brightnessctl s 10%-") },
-	{ 0, XKB_KEY_XF86MonBrightnessUp, spawn, SHCMD("brightnessctl s +10%") },
+	{ 0, XKB_KEY_XF86AudioMicMute, spawn, SHCMD("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle") },
+	{ 0, XKB_KEY_XF86MonBrightnessDown, spawn, SHCMD("python3 \"${XPWM_PROJECT_ROOT:-.}/tools/brightness.py\" down") },
+	{ 0, XKB_KEY_XF86MonBrightnessUp, spawn, SHCMD("python3 \"${XPWM_PROJECT_ROOT:-.}/tools/brightness.py\" up") },
 	{ WLR_MODIFIER_ALT, XKB_KEY_space, xpsystemmenu, {0} },
 	{ WLR_MODIFIER_ALT, XKB_KEY_F4, killclient, {0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Q, killclient, {0} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_M, quit, {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_M, spawn, SHCMD("./shell/xpwm-logoff") },
 	{ MODKEY, XKB_KEY_f, togglefullscreen, {0} },
 	{ MODKEY, XKB_KEY_space, togglefloating, {0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_space, xpallfloat, {0} },

@@ -89,6 +89,30 @@ static gboolean desktop_input_test(gpointer data)
  }
  case 7:
   if (!test_icon("External.txt")) break;
+  {
+   GtkWidget *menu = arrange_menu();
+   GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
+   GtkWidget *horizontal = g_list_last(items)->data;
+   GtkWidget *vertical = g_list_last(items)->prev->data;
+   gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(horizontal), TRUE);
+   g_assert_true(horizontal_icons);
+   g_assert_cmpint(icons[0].y, ==, icons[1].y);
+   g_assert_cmpint(icons[1].x, ==, icons[0].x+96);
+   char *path = layout_path(); GKeyFile *saved = g_key_file_new();
+   g_assert_true(g_key_file_load_from_file(saved, path, G_KEY_FILE_NONE, NULL));
+   char *alignment = g_key_file_get_string(saved, "Desktop", "IconAlignment", NULL);
+   g_assert_cmpstr(alignment, ==, "Horizontal"); g_free(alignment);
+   focused_icon = 0; GdkEventKey right = {.keyval = GDK_KEY_Right};
+   desktop_key(canvas, &right, NULL); g_assert_cmpint(focused_icon, ==, 1);
+   gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(vertical), TRUE);
+   g_assert_false(horizontal_icons);
+   g_assert_cmpint(icons[0].x, ==, icons[1].x);
+   g_assert_cmpint(icons[1].y, ==, icons[0].y+80);
+   int x, y; grid_position(grid_rows(), &x, &y);
+   g_assert_cmpint(x, ==, 112); g_assert_cmpint(y, ==, 18);
+   g_key_file_unref(saved); g_free(path); g_list_free(items); gtk_widget_destroy(menu);
+   g_print("PASS: vertical/horizontal icon arrangement, saved preference and orientation-aware arrow navigation\n");
+  }
   if (g_getenv("XPWM_DESKTOP_FILES_SCREENSHOT")) {
    char *argv[] = {"grim", (char *)g_getenv("XPWM_DESKTOP_FILES_SCREENSHOT"), NULL};
    g_assert_true(g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL, NULL, NULL));

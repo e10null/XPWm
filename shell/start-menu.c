@@ -161,10 +161,81 @@ static const char *app_folder(GAppInfo *app)
 	return "Other Programs";
 }
 
+static char *pins_path(void)
+{return g_build_filename(g_get_user_config_dir(),"xpwm","start-pins.ini",NULL);}
+static char **load_pins(void)
+{
+ char *path=pins_path();GKeyFile *ini=g_key_file_new();g_key_file_load_from_file(ini,path,G_KEY_FILE_NONE,NULL);
+ char **ids=g_key_file_get_string_list(ini,"Start","Applications",NULL,NULL);
+ g_key_file_unref(ini);g_free(path);return ids ? ids : g_new0(char *,1);
+}
+static gboolean has_pin(const char *id)
+{char **ids=load_pins();gboolean found=id && g_strv_contains((const char *const *)ids,id);g_strfreev(ids);return found;}
+static gboolean set_pin(const char *id,gboolean enabled,GError **error)
+{
+ if(!id || !*id){g_set_error_literal(error,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT,"This application has no desktop-entry ID.");return FALSE;}
+ char **ids=load_pins();GPtrArray *next=g_ptr_array_new_with_free_func(g_free);
+ for(guint i=0;ids[i];i++)if(strcmp(ids[i],id))g_ptr_array_add(next,g_strdup(ids[i]));
+ if(enabled && next->len>=8){g_set_error_literal(error,G_IO_ERROR,G_IO_ERROR_NO_SPACE,"Start can hold eight custom pinned applications.");g_strfreev(ids);g_ptr_array_unref(next);return FALSE;}
+ if(enabled)g_ptr_array_add(next,g_strdup(id));
+ char *path=pins_path(),*dir=g_path_get_dirname(path);GKeyFile *ini=g_key_file_new();
+ g_key_file_set_string_list(ini,"Start","Applications",(const char *const *)next->pdata,next->len);
+ char *text=g_key_file_to_data(ini,NULL,NULL);gboolean ok=g_mkdir_with_parents(dir,0700)==0;
+ if(ok)ok=g_file_set_contents(path,text,-1,error);
+ else g_set_error_literal(error,G_IO_ERROR,G_IO_ERROR_FAILED,"Unable to create Start settings directory.");
+ g_free(text);g_free(path);g_free(dir);g_key_file_unref(ini);g_ptr_array_unref(next);g_strfreev(ids);return ok;
+}
+static gboolean desktop_shortcut(GAppInfo *app,GError **error)
+{
+ const char *source=G_IS_DESKTOP_APP_INFO(app) ? g_desktop_app_info_get_filename(G_DESKTOP_APP_INFO(app)) : NULL;
+ if(!source){g_set_error_literal(error,G_IO_ERROR,G_IO_ERROR_NOT_SUPPORTED,"No desktop entry is available for this application.");return FALSE;}
+ const char *configured=g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP);
+ char *folder=configured && strcmp(configured,g_get_home_dir()) ? g_strdup(configured) : g_build_filename(g_get_home_dir(),"Desktop",NULL);
+ if(g_mkdir_with_parents(folder,0700)<0){g_set_error_literal(error,G_IO_ERROR,G_IO_ERROR_FAILED,"Unable to create the Desktop folder.");g_free(folder);return FALSE;}
+ char *name=g_path_get_basename(source),*target=g_build_filename(folder,name,NULL);
+ GFile *from=g_file_new_for_path(source),*to=g_file_new_for_path(target);
+ gboolean ok=g_file_copy(from,to,G_FILE_COPY_NONE,NULL,NULL,NULL,error);
+ g_object_unref(from);g_object_unref(to);g_free(name);g_free(target);g_free(folder);return ok;
+}
+static void app_action(GtkMenuItem *item,gpointer data)
+{
+ GAppInfo *app=g_object_get_data(G_OBJECT(item),"action-app");GError *error=NULL;
+ if(GPOINTER_TO_INT(data)==1)set_pin(g_app_info_get_id(app),!has_pin(g_app_info_get_id(app)),&error);
+ else desktop_shortcut(app,&error);
+ GtkWidget *root=g_object_get_data(G_OBJECT(item),"action-root");
+ if(!error && root)gtk_menu_popdown(GTK_MENU(root));
+ report_error(error);
+}
+static gboolean app_context(GtkWidget *item,GdkEventButton *event,gpointer data)
+{
+ if(event->button!=3 || event->type!=GDK_BUTTON_PRESS)return FALSE;
+ GAppInfo *app=g_object_get_data(G_OBJECT(item),"application");
+ GtkWidget *menu=gtk_menu_new(),*pin=gtk_menu_item_new_with_label(has_pin(g_app_info_get_id(app)) ? "Unpin from Start" : "Pin to Start");
+ GtkWidget *desktop=gtk_menu_item_new_with_label("Add to Desktop");
+ gtk_menu_shell_append(GTK_MENU_SHELL(menu),pin);gtk_menu_shell_append(GTK_MENU_SHELL(menu),desktop);
+ g_object_set_data_full(G_OBJECT(pin),"action-app",g_object_ref(app),g_object_unref);
+ g_object_set_data_full(G_OBJECT(desktop),"action-app",g_object_ref(app),g_object_unref);
+ GtkWidget *root=gtk_widget_get_parent(item);
+ while(GTK_IS_MENU(root)) {
+  GtkWidget *attached=gtk_menu_get_attach_widget(GTK_MENU(root));
+  if(!GTK_IS_MENU_ITEM(attached))break;
+  GtkWidget *parent=gtk_widget_get_parent(attached);if(!GTK_IS_MENU(parent))break;root=parent;
+ }
+ if(GTK_IS_MENU(root)) {
+  g_object_set_data_full(G_OBJECT(pin),"action-root",g_object_ref(root),g_object_unref);
+  g_object_set_data_full(G_OBJECT(desktop),"action-root",g_object_ref(root),g_object_unref);
+ }
+ g_signal_connect(pin,"activate",G_CALLBACK(app_action),GINT_TO_POINTER(1));
+ g_signal_connect(desktop,"activate",G_CALLBACK(app_action),GINT_TO_POINTER(2));
+ g_signal_connect_swapped(menu,"selection-done",G_CALLBACK(gtk_widget_destroy),menu);
+ xp_style_apply(menu);gtk_widget_show_all(menu);gtk_menu_popup_at_pointer(GTK_MENU(menu),(GdkEvent *)event);return TRUE;
+}
+
 static void bind_app(GtkWidget *item, GAppInfo *app)
 {
 	g_object_set_data_full(G_OBJECT(item), "application", g_object_ref(app), g_object_unref);
 	g_signal_connect(item, "activate", G_CALLBACK(launch), app);
+ g_signal_connect(item,"button-press-event",G_CALLBACK(app_context),NULL);
 	const char *description = g_app_info_get_description(app);
 	if (description && *description) gtk_widget_set_tooltip_text(item, description);
 }
@@ -491,9 +562,21 @@ GtkWidget *start_menu_new(void)
 		gtk_box_pack_start(GTK_BOX(labels), secondary, FALSE, FALSE, 0);
 		gtk_container_add(GTK_CONTAINER(item), labels);
 		gtk_menu_reorder_child(GTK_MENU(menu), item, shortcuts);
-		g_object_set_data_full(G_OBJECT(item), "application", g_object_ref(pinned[i]), g_object_unref);
-		g_signal_connect(item, "activate", G_CALLBACK(launch), pinned[i]);
+		bind_app(item,pinned[i]);
 	}
+ char **custom_pins=load_pins();
+ for(guint i=0;custom_pins[i] && shortcuts<10;i++) {
+  GDesktopAppInfo *app=g_desktop_app_info_new(custom_pins[i]);
+  if(!app)continue;
+  if(g_app_info_should_show(G_APP_INFO(app)) &&
+   (!pinned[0] || !g_app_info_equal(G_APP_INFO(app),pinned[0])) &&
+   (!pinned[1] || !g_app_info_equal(G_APP_INFO(app),pinned[1]))) {
+   item=cell(menu,g_app_info_get_display_name(G_APP_INFO(app)),0,1,++shortcuts,36,"pinned");
+   gtk_menu_reorder_child(GTK_MENU(menu),item,shortcuts);bind_app(item,G_APP_INFO(app));
+  }
+  g_object_unref(app);
+ }
+ g_strfreev(custom_pins);
 	g_object_set_data(G_OBJECT(menu), "pin-count", GUINT_TO_POINTER(shortcuts));
 	for (l = apps; l; l = l->next) {
 		GAppInfo *app = l->data;
@@ -530,7 +613,7 @@ GtkWidget *start_menu_new(void)
 	for (guint i = 0; i < G_N_ELEMENTS(roles); i++) {
 		for (l = apps; l; l = l->next) {
 			GAppInfo *app = l->data;
-			if (!g_app_info_should_show(app) || app == pinned[0] || app == pinned[1] ||
+			if (shortcuts>=10 || has_pin(g_app_info_get_id(app)) || !g_app_info_should_show(app) || app == pinned[0] || app == pinned[1] ||
 				g_list_find(favorites, app) || !has_category(app, roles[i]) ||
 				has_category(app, "ConsoleOnly") || has_category(app, "Settings")) continue;
 			item = cell(menu, g_app_info_get_display_name(app), 0, 1, ++shortcuts, 36, NULL);

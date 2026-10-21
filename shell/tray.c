@@ -22,9 +22,23 @@ static char *network_text, *battery_text;
 static guint poll_timer, volume_debounce, volume_click_timer;
 static GtkWidget *volume_panel, *tray_menu;
 static guint audio_revision, audio_query_revision;
+static GSubprocess *audio_events;
+static GDataInputStream *audio_event_stream;
+static guint audio_event_timer;
+static gboolean audio_event_pending;
 static guint network_revision, network_query_revision;
 static guint network_activity;
 static GHashTable *traffic;
+static GtkWidget *volume_down, *volume_up;
+static GtkWidget *brightness_window, *brightness_scale, *brightness_down, *brightness_up, *brightness_label;
+static char *brightness_program, *brightness_device;
+static const char *brightness_root = "/sys/class/backlight";
+static gboolean brightness_ok, brightness_busy, brightness_error;
+static gboolean brightness_dbus;
+static guint brightness_maximum;
+static int brightness, desired_brightness = -1;
+static guint brightness_debounce;
+static char brightness_tip[160];
 
 typedef struct { guint64 rx, tx; } Traffic;
 /* Read counters only for live interfaces; keep a baseline per interface so
@@ -80,6 +94,44 @@ typedef void (*Result)(gboolean ok, const char *output);
 typedef struct { GSubprocess *process; guint timeout; Result result; } Command;
 static void refresh(void);
 static void flush_audio(void);
+static void flush_brightness(void);
+static void refresh_audio(void);
+
+static gboolean audio_event_refresh(gpointer data)
+{
+	(void)data; audio_event_timer = 0;
+	refresh_audio(); return G_SOURCE_REMOVE;
+}
+
+static void audio_event_read(GObject *source, GAsyncResult *result, gpointer data)
+{
+	(void)data;
+	char *line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(source), result, NULL, NULL);
+	if (stopped) { g_free(line); return; }
+	if (!line) {
+		g_clear_object(&audio_event_stream); g_clear_object(&audio_events);
+		return; /* The existing poll also handles unavailable/restarted servers. */
+	}
+	if ((strstr(line, " on sink ") || strstr(line, " on server ")) && !audio_event_timer)
+		audio_event_timer = g_timeout_add(20, audio_event_refresh, NULL);
+	g_free(line);
+	g_data_input_stream_read_line_async(G_DATA_INPUT_STREAM(source), G_PRIORITY_DEFAULT,
+		cancellable, audio_event_read, NULL);
+}
+
+static void subscribe_audio(void)
+{
+	char *program = g_find_program_in_path("pactl");
+	if (!program || !audio_program || audio_events) { g_free(program); return; }
+	GSubprocessLauncher *launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE);
+	g_subprocess_launcher_setenv(launcher, "LC_ALL", "C", TRUE);
+	audio_events = g_subprocess_launcher_spawn(launcher, NULL, program, "subscribe", NULL);
+	g_object_unref(launcher); g_free(program);
+	if (!audio_events) return;
+	audio_event_stream = g_data_input_stream_new(g_subprocess_get_stdout_pipe(audio_events));
+	g_data_input_stream_read_line_async(audio_event_stream, G_PRIORITY_DEFAULT,
+		cancellable, audio_event_read, NULL);
+}
 
 static gboolean command_timeout(gpointer data)
 {
@@ -131,6 +183,8 @@ static void update_ui(void)
 	if (volume_window) {
 		gtk_widget_set_sensitive(volume_scale, audio_ok);
 		gtk_widget_set_sensitive(mute_check, audio_ok);
+		gtk_widget_set_sensitive(volume_down, audio_ok && volume > 0);
+		gtk_widget_set_sensitive(volume_up, audio_ok && volume < 100);
 		gtk_range_set_value(GTK_RANGE(volume_scale), volume);
 		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(mute_check), muted);
 		char *status = audio_ok ? g_strdup_printf("%d%%", volume) : g_strdup("Audio service unavailable");
@@ -142,6 +196,16 @@ static void update_ui(void)
 		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(wifi_check), wifi_enabled);
 	}
 	if (power_window) gtk_label_set_text(GTK_LABEL(power_label), battery_text ? battery_text : "Battery unavailable");
+	if (brightness_window) {
+		gtk_widget_set_sensitive(brightness_scale, brightness_ok);
+		gtk_widget_set_sensitive(brightness_down, brightness_ok && brightness > 1);
+		gtk_widget_set_sensitive(brightness_up, brightness_ok && brightness < 100);
+		gtk_range_set_value(GTK_RANGE(brightness_scale), brightness);
+		char *text = !brightness_program ? g_strdup("Brightness controls unavailable.") :
+			brightness_error ? g_strdup("Unable to change brightness. Check backlight permissions.") :
+			brightness_ok ? g_strdup_printf("Screen brightness: %d%%", brightness) : g_strdup("Screen brightness unavailable");
+		gtk_label_set_text(GTK_LABEL(brightness_label), text); g_free(text);
+	}
 	updating = FALSE;
 	if (tray_canvas) gtk_widget_queue_draw(tray_canvas);
 }
@@ -149,12 +213,15 @@ static void update_ui(void)
 static void got_audio(gboolean ok, const char *output)
 {
 	audio_query = FALSE;
-	if (audio_query_revision != audio_revision) { refresh(); return; }
+	if (audio_query_revision != audio_revision) { refresh_audio(); return; }
 	if (audio_busy || desired_volume >= 0 || desired_mute >= 0) return;
 	double level = 0;
 	audio_ok = ok && output && sscanf(output, "Volume: %lf", &level) == 1 && isfinite(level) && level >= 0;
 	if (audio_ok) { volume = (int)round(MIN(level*100, 1000)); muted = strstr(output, "[MUTED]") != NULL; }
 	update_ui();
+	/* Show each completed read even during held-key repeats, then catch up to
+	 * notifications received while that read was in flight. */
+	if (audio_event_pending) refresh_audio();
 }
 
 static void got_network(gboolean ok, const char *output)
@@ -192,15 +259,35 @@ static void read_battery(void)
 	g_free(status);
 }
 
+static void refresh_audio(void)
+{
+	if (!audio_program) return;
+	if (audio_query || audio_busy) { audio_event_pending = TRUE; return; }
+	audio_event_pending = FALSE;
+	audio_query = TRUE;
+	audio_query_revision = audio_revision;
+	const char *argv[] = {audio_program, "get-volume", "@DEFAULT_AUDIO_SINK@", NULL};
+	run(argv, got_audio);
+}
+
 static void refresh(void)
 {
 	read_traffic("/sys/class/net");
-	if (audio_program && !audio_query && !audio_busy) {
-		audio_query = TRUE;
-		audio_query_revision = audio_revision;
-		const char *argv[] = {audio_program, "get-volume", "@DEFAULT_AUDIO_SINK@", NULL};
-		run(argv, got_audio);
+	if (brightness_device && !brightness_busy && desired_brightness < 0) {
+		char *path = g_build_filename(brightness_root, brightness_device, "brightness", NULL), *value = NULL;
+		gboolean current_ok = g_file_get_contents(path, &value, NULL, NULL);
+		double current = value ? g_ascii_strtod(value, NULL) : -1;
+		g_free(path); g_free(value); value = NULL;
+		path = g_build_filename(brightness_root, brightness_device, "max_brightness", NULL);
+		gboolean maximum_ok = g_file_get_contents(path, &value, NULL, NULL);
+		double maximum = value ? g_ascii_strtod(value, NULL) : 0;
+		brightness_ok = brightness_program && current_ok && maximum_ok && isfinite(current) && isfinite(maximum) && current >= 0 && maximum > 0 && maximum <= G_MAXUINT;
+		brightness_maximum = brightness_ok ? (guint)maximum : 0;
+		if (brightness_ok) brightness = CLAMP((int)round(current * 100 / maximum), 0, 100);
+		g_free(path); g_free(value);
 	}
+	refresh_audio();
+	subscribe_audio();
 	if (network_program && !network_query && !network_busy) {
 		network_query = TRUE;
 		network_query_revision = network_revision;
@@ -257,6 +344,56 @@ static void mute_changed(GtkToggleButton *button, gpointer data)
 	if (updating) return;
 	muted = gtk_toggle_button_get_active(button); desired_mute = muted;
 	flush_audio();
+}
+
+static void volume_step(GtkButton *button, gpointer data)
+{
+	if (!audio_ok) return;
+	volume = desired_volume = CLAMP(volume + GPOINTER_TO_INT(data), 0, 100);
+	flush_audio(); update_ui();
+}
+
+static void brightness_done(gboolean ok, const char *output)
+{
+	brightness_busy = FALSE; brightness_error = !ok;
+	if (!ok) { desired_brightness = -1; refresh(); return; }
+	flush_brightness();
+}
+
+static void flush_brightness(void)
+{
+	if (brightness_busy || !brightness_program || !brightness_device) return;
+	if (desired_brightness < 0) { refresh(); return; }
+	char value[32];
+	if (brightness_dbus) g_snprintf(value, sizeof(value), "%u", (guint)ceil(brightness_maximum * (desired_brightness / 100.0)));
+	else g_snprintf(value, sizeof(value), "%d%%", desired_brightness);
+	desired_brightness = -1; brightness_busy = TRUE;
+	const char *argv[] = {brightness_program, "--class=backlight", "--device", brightness_device, "set", value, NULL};
+	const char *dbus_argv[] = {brightness_program, "call", "--system", "--dest", "org.freedesktop.login1",
+		"--object-path", "/org/freedesktop/login1/session/self", "--method",
+		"org.freedesktop.login1.Session.SetBrightness", "backlight", brightness_device, value, NULL};
+	run(brightness_dbus ? dbus_argv : argv, brightness_done);
+}
+
+static gboolean brightness_later(gpointer data)
+{
+	brightness_debounce = 0; flush_brightness(); return G_SOURCE_REMOVE;
+}
+
+static void brightness_changed(GtkRange *range, gpointer data)
+{
+	if (updating || !brightness_ok) return;
+	brightness = desired_brightness = CLAMP((int)gtk_range_get_value(range), 1, 100);
+	if (brightness_debounce) g_source_remove(brightness_debounce);
+	brightness_debounce = g_timeout_add(100, brightness_later, NULL);
+	update_ui();
+}
+
+static void brightness_step(GtkButton *button, gpointer data)
+{
+	if (!brightness_ok) return;
+	brightness = desired_brightness = CLAMP(brightness + GPOINTER_TO_INT(data), 1, 100);
+	flush_brightness(); update_ui();
 }
 
 static void wifi_changed_done(gboolean ok, const char *output)
@@ -409,7 +546,7 @@ static void open_volume(void)
  gtk_widget_set_margin_bottom(volume_panel, 30);
  gtk_widget_set_margin_end(volume_panel, MAX(7, xp_tray_width()-TRAY_LEFT-SLOT/2-38));
  GtkWidget *fixed = gtk_fixed_new();
- gtk_widget_set_size_request(fixed, 75, 130);
+ gtk_widget_set_size_request(fixed, 75, 170);
  gtk_container_add(GTK_CONTAINER(volume_panel), fixed);
  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), volume_panel);
  GtkWidget *title = gtk_label_new("Volume");
@@ -420,7 +557,15 @@ static void open_volume(void)
  gtk_widget_set_size_request(volume_scale, 42, 81);
  gtk_fixed_put(GTK_FIXED(fixed), volume_scale, 17, 24);
  mute_check = gtk_check_button_new_with_mnemonic("_Mute");
- gtk_fixed_put(GTK_FIXED(fixed), mute_check, 6, 114);
+ volume_down = gtk_button_new_with_label("−"); volume_up = gtk_button_new_with_label("+");
+ gtk_widget_set_size_request(volume_down, 30, 25); gtk_widget_set_size_request(volume_up, 30, 25);
+ gtk_widget_set_tooltip_text(volume_down, "Lower volume by 5%");
+ gtk_widget_set_tooltip_text(volume_up, "Raise volume by 5%");
+ gtk_fixed_put(GTK_FIXED(fixed), volume_down, 5, 110);
+ gtk_fixed_put(GTK_FIXED(fixed), volume_up, 40, 110);
+ g_signal_connect(volume_down, "clicked", G_CALLBACK(volume_step), GINT_TO_POINTER(-5));
+ g_signal_connect(volume_up, "clicked", G_CALLBACK(volume_step), GINT_TO_POINTER(5));
+ gtk_fixed_put(GTK_FIXED(fixed), mute_check, 6, 145);
  static GtkCssProvider *css;
  if (!css) {
  css = gtk_css_provider_new();
@@ -480,9 +625,34 @@ static void open_power(void)
 	refresh(); gtk_widget_show_all(window);
 }
 
+static void open_brightness(void)
+{
+	GtkWidget *box, *window = dialog(&brightness_window, "Screen Brightness", &box);
+	if (!window) return;
+	brightness_label = gtk_label_new(NULL);
+	gtk_label_set_line_wrap(GTK_LABEL(brightness_label), TRUE);
+	gtk_box_pack_start(GTK_BOX(box), brightness_label, FALSE, FALSE, 0);
+	GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+	brightness_down = gtk_button_new_with_label("−"); brightness_up = gtk_button_new_with_label("+");
+	gtk_widget_set_tooltip_text(brightness_down, "Lower brightness by 10%");
+	gtk_widget_set_tooltip_text(brightness_up, "Raise brightness by 10%");
+	brightness_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 1, 100, 1);
+	gtk_scale_set_draw_value(GTK_SCALE(brightness_scale), FALSE);
+	gtk_box_pack_start(GTK_BOX(row), brightness_down, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(row), brightness_scale, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(row), brightness_up, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
+	g_signal_connect(brightness_down, "clicked", G_CALLBACK(brightness_step), GINT_TO_POINTER(-10));
+	g_signal_connect(brightness_up, "clicked", G_CALLBACK(brightness_step), GINT_TO_POINTER(10));
+	g_signal_connect(brightness_scale, "value-changed", G_CALLBACK(brightness_changed), NULL);
+	refresh(); gtk_widget_show_all(window);
+}
+
+static int tray_slots(void) { return 2 + !!battery_path + !!brightness_device; }
+
 void xp_tray_set_clock_visible(gboolean visible) { clock_visible = visible; }
 gboolean xp_tray_popup_open(void) { return volume_window || tray_menu; }
-int xp_tray_width(void) { return TRAY_LEFT + SLOT*(battery_path ? 3 : 2) + (clock_visible ? CLOCK : 0) + TRAY_RIGHT; }
+int xp_tray_width(void) { return TRAY_LEFT + SLOT*tray_slots() + (clock_visible ? CLOCK : 0) + TRAY_RIGHT; }
 
 /* The theme's ContentMargins are 19,7,0,0. Every original icon stays 16x16;
  * toolbar slots have three pixels either side, with no image resampling. */
@@ -490,7 +660,10 @@ int xp_tray_hit(int x)
 {
 	if (x < TRAY_LEFT || x >= xp_tray_width()) return -1;
 	int slot = (x - TRAY_LEFT) / SLOT;
-	return slot < (battery_path ? 3 : 2) ? slot : clock_visible ? 3 : -1;
+	if (slot < 2) return slot;
+	if (battery_path && slot == 2) return 2;
+	if (brightness_device && slot == 2 + !!battery_path) return 4;
+	return clock_visible ? 3 : -1;
 }
 
 int xp_tray_clock_x(void) { return xp_tray_width() - xp_tray_clock_width() - TRAY_RIGHT; }
@@ -506,17 +679,25 @@ static void original_icon(cairo_t *cr, const char *name, int x, int y)
 	g_free(path);
 }
 
+/* Original BATMETER.DLL bitmap frames, selected without repainting artwork. */
+static void battery_icon(cairo_t *cr,int x,int y)
+{
+ const char *role=capacity<0 ? "power-unknown" :
+  battery_text && strstr(battery_text,"Charging") ? "power-charging" :
+  battery_text && strstr(battery_text,"Full") ? "power-ac" :
+  capacity<20 ? "power-low" : capacity<60 ? "power-medium" : "power-battery";
+ original_icon(cr,role,x,y);
+}
+
 void xp_tray_draw(cairo_t *cr, int x, int height)
 {
 	int y = (height-16)/2;
 	int icon_x = x + TRAY_LEFT + (SLOT-16)/2;
 	original_icon(cr, muted || !audio_ok ? "volume-muted" : "volume", icon_x, y);
 	original_icon(cr, network_icon(), icon_x+SLOT, y);
-	if (battery_path) {
-	const char *power = battery_text && strstr(battery_text, "Charging") ? "power-charging" :
-	battery_text && strstr(battery_text, "Full") ? "power-ac" : capacity < 20 ? "power-low" : "power-battery";
-	original_icon(cr, power, icon_x+2*SLOT, y);
-	}
+	if (battery_path) battery_icon(cr,icon_x+2*SLOT,y);
+	if (brightness_device)
+  original_icon(cr,"display-brightness",icon_x+(2+!!battery_path)*SLOT,y);
 }
 
 const char *xp_tray_tooltip(int x)
@@ -524,6 +705,11 @@ const char *xp_tray_tooltip(int x)
 	if (x < 0 || x >= xp_tray_width()) return NULL;
 	int slot = xp_tray_hit(x);
 	if (slot < 0) return NULL;
+	if (slot == 4) {
+		g_snprintf(brightness_tip, sizeof(brightness_tip), "Screen brightness: %d%%%s", brightness,
+			brightness_program ? "" : " (controls unavailable)");
+		return brightness_tip;
+	}
 	if (slot == 0) {
 		g_snprintf(audio_tip, sizeof(audio_tip), audio_ok ? "Volume: %d%%%s" : "Audio service unavailable", volume, muted ? " (muted)" : "");
 		return audio_tip;
@@ -559,6 +745,7 @@ static void menu_network(GtkMenuItem *item, gpointer data) { open_network(); }
 static void menu_connections(GtkMenuItem *item, gpointer data) { open_tool(NULL, "nm-connection-editor"); }
 static void menu_date(GtkMenuItem *item, gpointer data) { open_date(); }
 static void menu_power(GtkMenuItem *item, gpointer data) { open_power(); }
+static void menu_brightness(GtkMenuItem *item, gpointer data) { open_brightness(); }
 static void menu_entry(GtkWidget *menu, const char *label, GCallback callback)
 {
  GtkWidget *item = gtk_menu_item_new_with_label(label);
@@ -576,6 +763,7 @@ static void context_menu(int slot)
   menu_entry(tray_menu, "Status", G_CALLBACK(menu_network));
   menu_entry(tray_menu, "Open Network Connections", G_CALLBACK(menu_connections));
  } else if (slot == 2) menu_entry(tray_menu, "Open Power Meter", G_CALLBACK(menu_power));
+ else if (slot == 4) menu_entry(tray_menu, "Adjust Screen Brightness", G_CALLBACK(menu_brightness));
  else menu_entry(tray_menu, "Adjust Date/Time", G_CALLBACK(menu_date));
  xp_style_apply(tray_menu); gtk_widget_show_all(tray_menu);
  g_signal_connect(tray_menu, "selection-done", G_CALLBACK(tray_menu_closed), NULL);
@@ -597,6 +785,7 @@ void xp_tray_double_click(int x)
  else if (slot == 1) open_network();
  else if (slot == 2) open_power();
  else if (slot == 3) open_date();
+ else if (slot == 4) open_brightness();
 }
 
 void xp_tray_click(int x, guint button)
@@ -610,13 +799,18 @@ void xp_tray_click(int x, guint button)
   gint delay = 250;
   g_object_get(gtk_settings_get_default(), "gtk-double-click-time", &delay, NULL);
   volume_click_timer = g_timeout_add(delay+10, volume_single_click, NULL);
- } else if (slot == 1) open_network();
+ } else if (slot == 4) open_brightness();
+ else if (slot == 1) open_network();
  else if (slot == 2 && battery_path) open_power();
  else open_date();
 }
 
 gboolean xp_tray_scroll(int x, GdkScrollDirection direction)
 {
+	if (xp_tray_hit(x) == 4) {
+		if (direction != GDK_SCROLL_UP && direction != GDK_SCROLL_DOWN) return FALSE;
+		brightness_step(NULL, GINT_TO_POINTER(direction == GDK_SCROLL_UP ? 10 : -10)); return TRUE;
+	}
 	if (xp_tray_hit(x) != 0) return FALSE;
 	if (audio_ok && (direction == GDK_SCROLL_UP || direction == GDK_SCROLL_DOWN)) {
 		volume = desired_volume = CLAMP(volume + (direction == GDK_SCROLL_UP ? 5 : -5), 0, 100);
@@ -629,6 +823,13 @@ void xp_tray_init(GtkWidget *canvas)
 {
 	tray_canvas = canvas; stopped = FALSE; cancellable = g_cancellable_new();
 	audio_program = g_find_program_in_path("wpctl"); network_program = g_find_program_in_path("nmcli");
+	brightness_program = g_find_program_in_path("brightnessctl");
+	brightness_dbus = brightness_program == NULL;
+	if (brightness_dbus) brightness_program = g_find_program_in_path("gdbus");
+	GDir *backlights = g_dir_open(brightness_root, 0, NULL);
+	const char *backlight = backlights ? g_dir_read_name(backlights) : NULL;
+	if (backlight) brightness_device = g_strdup(backlight);
+	if (backlights) g_dir_close(backlights);
 	GDir *dir = g_dir_open("/sys/class/power_supply", 0, NULL);
 	const char *name;
 	while (dir && (name = g_dir_read_name(dir))) {
@@ -648,12 +849,18 @@ void xp_tray_stop(void)
 	if (poll_timer) g_source_remove(poll_timer);
 	if (volume_debounce) g_source_remove(volume_debounce);
 	if (volume_click_timer) g_source_remove(volume_click_timer);
+	if (brightness_debounce) g_source_remove(brightness_debounce);
+	if (audio_event_timer) { g_source_remove(audio_event_timer); audio_event_timer = 0; }
+	if (audio_events) g_subprocess_force_exit(audio_events);
 	if (tray_menu) { g_signal_handlers_disconnect_by_func(tray_menu, tray_menu_closed, NULL); gtk_widget_destroy(tray_menu); tray_menu = NULL; }
 	g_cancellable_cancel(cancellable); g_clear_object(&cancellable);
+	g_clear_object(&audio_event_stream); g_clear_object(&audio_events);
 	if (volume_window) gtk_widget_destroy(volume_window);
 	if (network_window) gtk_widget_destroy(network_window);
 	if (date_window) gtk_widget_destroy(date_window);
 	if (power_window) gtk_widget_destroy(power_window);
+	if (brightness_window) gtk_widget_destroy(brightness_window);
+	g_clear_pointer(&brightness_program, g_free); g_clear_pointer(&brightness_device, g_free);
 	g_clear_pointer(&audio_program, g_free); g_clear_pointer(&network_program, g_free);
 	g_clear_pointer(&traffic, g_hash_table_unref);
 	g_clear_pointer(&network_text, g_free); g_clear_pointer(&battery_path, g_free); g_clear_pointer(&battery_text, g_free);

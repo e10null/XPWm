@@ -36,6 +36,8 @@ static void dropdown_check(void)
  int x, y, width, height, fields, px, py;
  Client *parent;
  struct wlr_box moved, popup;
+ struct wlr_scene_tree *tree;
+ int scene_x,scene_y;
  struct wlr_pointer_button_event event;
  FILE *file;
  if (dropdown_verified) return;
@@ -62,6 +64,10 @@ static void dropdown_check(void)
    toplevel_from_wlr_surface(surface->surface, &parent, NULL);
    if (parent != c) continue;
    popup = surface->popup->current.geometry;
+   tree=surface->surface->data;
+   wlr_scene_node_coords(&tree->node,&scene_x,&scene_y);
+   assert(abs(scene_x-(c->geom.x+(int)c->bw+popup.x))<=1);
+   assert(abs(scene_y-(c->geom.y+(int)c->bw+XP_CAPTION+popup.y))<=1);
    px = c->geom.x + (int)c->bw + popup.x;
    py = c->geom.y + (int)c->bw + XP_CAPTION + popup.y;
    fprintf(stderr, "Display dropdown field=%dx%d popup=%dx%d at %d,%d anchor=%d,%d\n", width, height, popup.width, popup.height, popup.x, popup.y, x, y);

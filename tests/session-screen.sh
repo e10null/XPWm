@@ -9,6 +9,9 @@ if [ "${1:-}" = client ]; then
 	XPWM_LOGOFF_DELAY_MS=80 XPWM_SOUND_MUTE=1 XPWM_SESSION_DRY_RUN=1 XPWM_SESSION_MARKER="$XDG_RUNTIME_DIR/logoff" \
 		GDK_BACKEND=wayland ./shell/xpwm-logoff
 	test "$(cat "$XDG_RUNTIME_DIR/logoff")" = logoff
+	XPWM_LOGOFF_DELAY_MS=80 XPWM_SOUND_MUTE=1 XPWM_SESSION_MARKER="$XDG_RUNTIME_DIR/preview" \
+  GDK_BACKEND=wayland ./shell/xpwm-logoff --preview
+ test "$(cat "$XDG_RUNTIME_DIR/preview")" = logoff
 	printf '%s\n' 'PASS: XP logon acceptance and logoff transition screens'
 	kill -TERM "$PPID"
 	exit 0

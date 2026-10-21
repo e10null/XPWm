@@ -9,6 +9,10 @@ static GdkDragContext *operation_drag;
 static guint32 operation_drag_time;
 static guint reload_timer;
 static gboolean loading, reload_again, auto_arrange, align_grid = TRUE;
+static gboolean horizontal_icons;
+/* Layer-shell receives its real size before the first frame, after GTK
+ * has already emitted allocations for its temporary startup size. */
+static gboolean layout_ready;
 static int sort_order;
 static void reload_icons(void);
 static void save_layout(void);
@@ -26,6 +30,7 @@ static void free_icon(DesktopIcon *icon)
 }
 static void save_layout(void)
 {
+ if (!layout_ready) return;
  for (guint i = 0; i < icon_count; i++) {
   char *group = icon_group(&icons[i]);
   g_key_file_set_integer(desktop_layout, group, "x", icons[i].x);
@@ -34,6 +39,7 @@ static void save_layout(void)
  g_key_file_set_boolean(desktop_layout, "Desktop", "AutoArrange", auto_arrange);
  g_key_file_set_boolean(desktop_layout, "Desktop", "AlignToGrid", align_grid);
  g_key_file_set_integer(desktop_layout, "Desktop", "SortOrder", sort_order);
+ g_key_file_set_string(desktop_layout, "Desktop", "IconAlignment", horizontal_icons ? "Horizontal" : "Vertical");
  char *path = layout_path(), *dir = g_path_get_dirname(path), *text = g_key_file_to_data(desktop_layout, NULL, NULL);
  GError *error = NULL;
  if (g_mkdir_with_parents(dir, 0700) || !g_file_set_contents(path, text, -1, &error)) {
@@ -49,16 +55,25 @@ static gboolean vacant(int x, int y, guint before)
  return TRUE;
 }
 static int grid_rows(void) { return MAX(1, (gtk_widget_get_allocated_height(canvas)-18)/80); }
+static int grid_columns(void) { return MAX(1, (gtk_widget_get_allocated_width(canvas)-16)/96); }
+static void grid_position(guint slot, int *x, int *y)
+{
+ int span = horizontal_icons ? grid_columns() : grid_rows();
+ *x = 16 + (horizontal_icons ? slot % span : slot / span)*96;
+ *y = 18 + (horizontal_icons ? slot / span : slot % span)*80;
+}
 static void place_icons(gboolean force)
 {
+ if (!layout_ready) return;
  int width = MAX(96, gtk_widget_get_allocated_width(canvas)), height = MAX(96, gtk_widget_get_allocated_height(canvas));
- int rows = grid_rows();
  for (guint i = 0; i < icon_count; i++) {
   DesktopIcon *icon = &icons[i];
   if (force || auto_arrange || !icon->positioned) {
    guint slot = force || auto_arrange ? i : 0;
-   while (!vacant(16+(slot/rows)*96, 18+(slot%rows)*80, i)) slot++;
-   icon->x = 16+(slot/rows)*96; icon->y = 18+(slot%rows)*80; icon->positioned = TRUE;
+   int x, y;
+   grid_position(slot, &x, &y);
+   while (!vacant(x, y, i)) grid_position(++slot, &x, &y);
+   icon->x = x; icon->y = y; icon->positioned = TRUE;
   } else {
    icon->x = CLAMP(icon->x, 0, width-80); icon->y = CLAMP(icon->y, 0, height-76);
    if (align_grid) {
@@ -69,6 +84,13 @@ static void place_icons(gboolean force)
   }
  }
  gtk_widget_queue_draw(canvas);
+}
+static void prepare_layout(void)
+{
+ if (layout_ready) return;
+ layout_ready = TRUE;
+ place_icons(FALSE);
+ if (!loading) save_layout();
 }
 static void restore_position(DesktopIcon *icon)
 {
@@ -310,6 +332,12 @@ static void toggle_arrange(GtkCheckMenuItem *item, gpointer data)
 { auto_arrange = gtk_check_menu_item_get_active(item); if (auto_arrange) place_icons(TRUE); save_layout(); }
 static void toggle_grid(GtkCheckMenuItem *item, gpointer data)
 { align_grid = gtk_check_menu_item_get_active(item); place_icons(FALSE); save_layout(); }
+static void change_alignment(GtkCheckMenuItem *item, gpointer data)
+{
+ if (!gtk_check_menu_item_get_active(item)) return;
+ horizontal_icons = GPOINTER_TO_INT(data);
+ place_icons(TRUE); save_layout();
+}
 static void open_selected(GtkMenuItem *item, gpointer data)
 { if (focused_icon >= 0 && (guint)focused_icon < icon_count) launch(&icons[focused_icon], gtk_get_current_event_time()); }
 static GtkWidget *action(GtkWidget *menu, const char *name, GCallback callback, gpointer data, gboolean sensitive)
@@ -333,6 +361,13 @@ static GtkWidget *arrange_menu(void)
  g_signal_connect(item, "toggled", G_CALLBACK(toggle_arrange), NULL); gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
  item = gtk_check_menu_item_new_with_label("Align to Grid"); gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), align_grid);
  g_signal_connect(item, "toggled", G_CALLBACK(toggle_grid), NULL); gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+ gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+ GtkWidget *vertical = gtk_radio_menu_item_new_with_label(NULL, "Align Vertically");
+ GtkWidget *horizontal = gtk_radio_menu_item_new_with_label_from_widget(GTK_RADIO_MENU_ITEM(vertical), "Align Horizontally");
+ gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(horizontal_icons ? horizontal : vertical), TRUE);
+ g_signal_connect(vertical, "toggled", G_CALLBACK(change_alignment), GINT_TO_POINTER(FALSE));
+ g_signal_connect(horizontal, "toggled", G_CALLBACK(change_alignment), GINT_TO_POINTER(TRUE));
+ gtk_menu_shell_append(GTK_MENU_SHELL(menu), vertical); gtk_menu_shell_append(GTK_MENU_SHELL(menu), horizontal);
  xp_style_apply(menu); return menu;
 }
 static void canvas_resized(GtkWidget *widget, GtkAllocation *allocation, gpointer data) { if (!pointer_down) place_icons(FALSE); }
@@ -404,10 +439,10 @@ static gboolean desktop_key(GtkWidget *widget, GdkEventKey *event, gpointer data
  else if (event->keyval == GDK_KEY_Escape) clear_selection();
  else {
   int next = focused_icon;
-  if (event->keyval == GDK_KEY_Down) next++;
-  else if (event->keyval == GDK_KEY_Up) next--;
-  else if (event->keyval == GDK_KEY_Left) next -= grid_rows();
-  else if (event->keyval == GDK_KEY_Right) next += grid_rows();
+  if (event->keyval == GDK_KEY_Down) next += horizontal_icons ? grid_columns() : 1;
+  else if (event->keyval == GDK_KEY_Up) next -= horizontal_icons ? grid_columns() : 1;
+  else if (event->keyval == GDK_KEY_Left) next -= horizontal_icons ? 1 : grid_rows();
+  else if (event->keyval == GDK_KEY_Right) next += horizontal_icons ? 1 : grid_rows();
   else if (event->keyval == GDK_KEY_Home) next = 0;
   else if (event->keyval == GDK_KEY_End) next = icon_count-1;
   else return FALSE;
@@ -434,6 +469,8 @@ static void init_icons(void)
  auto_arrange = g_key_file_get_boolean(desktop_layout, "Desktop", "AutoArrange", NULL);
  if (g_key_file_has_key(desktop_layout, "Desktop", "AlignToGrid", NULL)) align_grid = g_key_file_get_boolean(desktop_layout, "Desktop", "AlignToGrid", NULL);
  sort_order = CLAMP(g_key_file_get_integer(desktop_layout, "Desktop", "SortOrder", NULL), 0, 3);
+ char *alignment = g_key_file_get_string(desktop_layout, "Desktop", "IconAlignment", NULL);
+ horizontal_icons = !g_strcmp0(alignment, "Horizontal"); g_free(alignment);
  const char *documents = g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS);
  char *document_uri = g_filename_to_uri(documents ? documents : g_get_home_dir(), NULL, NULL);
  const char *labels[] = {"My Documents", "My Computer", "My Network Places", "Recycle Bin", "Internet Explorer"};

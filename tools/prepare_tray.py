@@ -38,8 +38,7 @@ def prepare(source, iso, output):
         library = work / library_name
         library.write_bytes(run(['7z', 'x', '-so', str(cab), library_name]))
         run(['wrestool', '-x', '-t', '14', '-o', str(work), str(library)])
-        roles = {'volume': 230, 'volume-muted': 231, 'power-ac': 210,
-                 'power-charging': 200, 'power-battery': 322, 'power-low': 324}
+        roles = {'volume': 230, 'volume-muted': 231}
         for role, ident in roles.items():
             ico = work / f'{library_name}_14_{ident}.ico'
             # Explicit depth: Pillow otherwise selects the first 16px entry,
@@ -49,6 +48,33 @@ def prepare(source, iso, output):
             save(role, image, dict(source=member, library=library_name, resource_id=ident,
                                   type='GROUP_ICON', bit_depth=depth, ico_sha256=sha(ico.read_bytes()),
                                   library_sha256=sha(library.read_bytes()), container_sha256=sha(compressed)))
+
+    # STObject 316..325 are mouse icons, not batteries. The actual native
+    # battery artwork lives in BATMETER bitmap 301 (ten 16px frames).
+    with tempfile.TemporaryDirectory(prefix='xpwm-battery-') as temporary:
+        work = Path(temporary)
+        member = 'I386/BATMETER.DL_'
+        compressed = run(['7z', 'x', '-so', str(iso), member])
+        cab = work / 'BATMETER.DL_'
+        cab.write_bytes(compressed)
+        name = next(n for n in archive_members(cab) if n.lower() == 'batmeter.dll')
+        library = work / name
+        library.write_bytes(run(['7z', 'x', '-so', str(cab), name]))
+        raw = run(['wrestool', '-x', '--raw', '-t', '2', '-n', '301', str(library)])
+        bitmap = run(['wrestool', '-x', '-t', '2', '-n', '301', str(library)])
+        strip = Image.open(io.BytesIO(bitmap)).convert('RGBA')
+        if strip.size != (161, 16):
+            raise ValueError('Unexpected BATMETER 16px strip dimensions')
+        roles = {'power-battery': 0, 'power-medium': 1, 'power-low': 2,
+                 'power-unknown': 4, 'power-ac': 6, 'power-charging': 8}
+        for role, frame in roles.items():
+            image = strip.crop((frame*16, 0, frame*16+16, 16))
+            image.putdata([(r,g,b,0 if (r,g,b)==(255,0,255) else 255)
+                           for r,g,b,a in (image.get_flattened_data() if hasattr(image, 'get_flattened_data') else image.getdata())])
+            save(role, image, dict(source=member, library=name, resource_id=301,
+                                  type='BITMAP', frame=frame, color_key='#ff00ff',
+                                  raw_sha256=sha(raw), library_sha256=sha(library.read_bytes()),
+                                  container_sha256=sha(compressed)))
 
     # Keep the actual Win32 popup template as a geometry reference, rather
     # than deriving its dimensions from a screenshot or a generic GTK dialog.
@@ -71,10 +97,10 @@ def prepare(source, iso, output):
 
     roles = {'network-connected': 190, 'network-transmit': 191,
              'network-receive': 192, 'network-idle': 193,
-             'network-disconnected': 195, 'network-limited': 196}
+             'network-disconnected': 195, 'network-limited': 196, 'display-brightness': 100}
     for role, ident in roles.items():
         group = next(r for r in records if r['type'] == 'GROUP_ICON' and
-                     Path(r['source']).name.lower() == 'netshell.dll' and r['id'] == ident)
+                     Path(r['source']).name.lower() == ('desk.cpl' if role == 'display-brightness' else 'netshell.dll') and r['id'] == ident)
         component = max((c for c in group['components'] if c['width'] == 16 and
                          c['height'] == 16 and c.get('file')), key=lambda c: c['bit_depth'])
         record = next(r for r in records if r['file'] == component['file'])
