@@ -1,5 +1,6 @@
 /* Linux argv parsing, not cmd.exe/CreateProcess emulation. */
 #include "run-command.h"
+#include <gio/gdesktopappinfo.h>
 
 gchar **run_command_parse(const char *command, GError **error)
 {
@@ -64,6 +65,19 @@ gchar *run_command_target_uri(const char *command)
 
 gboolean run_command_launch(const char *command, GError **error)
 {
+ /* A chosen application is launched through its desktop entry, preserving
+  * Exec field codes, Terminal and D-Bus activation semantics. */
+ char **desktop_argv=NULL;
+ if(g_shell_parse_argv(command?command:"",NULL,&desktop_argv,NULL) && desktop_argv[0] && !desktop_argv[1]) {
+  char *file=g_canonicalize_filename(desktop_argv[0],g_get_home_dir());
+  if(g_str_has_suffix(file,".desktop") && g_file_test(file,G_FILE_TEST_IS_REGULAR)) {
+   GDesktopAppInfo *app=g_desktop_app_info_new_from_filename(file);g_free(file);g_strfreev(desktop_argv);
+   if(!app){g_set_error_literal(error,G_IO_ERROR,G_IO_ERROR_INVALID_DATA,"Invalid desktop application entry");return FALSE;}
+   gboolean result=g_app_info_launch(G_APP_INFO(app),NULL,NULL,error);g_object_unref(app);return result;
+  }
+  g_free(file);
+ }
+ g_strfreev(desktop_argv);
 	char *uri = run_command_target_uri(command);
 	if (uri) {
 		gboolean launched = g_app_info_launch_default_for_uri(uri, NULL, error);

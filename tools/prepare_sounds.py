@@ -16,6 +16,8 @@ from pathlib import Path, PurePosixPath
 from xp_assets import archive_members, metadata, run, safe_path, sha, write
 
 ROLE_STEMS = {
+    'device-connect': {'windows xp hardware insert', 'xphdinst'},
+    'device-disconnect': {'windows xp hardware remove', 'xphdrem'},
     'startup': {'windows xp startup', 'windows startup', 'windows start', 'xpstartu'},
     'logon': {'windows xp logon sound', 'windows logon', 'xplogon'},
     'logoff': {'windows xp logoff sound', 'windows logoff', 'xplogoff'},
@@ -73,12 +75,47 @@ def read_member(source, member):
     return original, original
 
 
+def add_missing_roles(root):
+    """Add newly supported events from indexed raw media, preserving existing WAVs."""
+    index_path = root / 'index.json'
+    index = json.loads(index_path.read_text())
+    added = []
+    records = sorted(index['sounds'], key=lambda r: (
+        r['original_format'] != 'WAV', len(r['source']), r['source'].lower()))
+    for record in records:
+        role = role_for(record['source'])
+        if not role or (root / (role + '.wav')).exists():
+            continue
+        raw = safe_path(record['file'])
+        original, decoded = read_member(root, str(raw))
+        if sha(original) != record['source_sha256'] or sha(decoded) != record['decoded_sha256']:
+            raise ValueError('Sound provenance mismatch: ' + record['source'])
+        if decoded[:4] != b'RIFF' or decoded[8:12] != b'WAVE':
+            raise ValueError('Invalid WAV: ' + record['source'])
+        record['role'] = role
+        record['selected'] = True
+        record['decoded_file'] = write(root, role + '.wav', decoded)
+        added.append(role)
+    if added:
+        temporary = index_path.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(index, ensure_ascii=True, indent=2) + '\n')
+        temporary.replace(index_path)
+    return added
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', type=Path, help='XP ISO or extracted Windows directory')
+    parser.add_argument('source', type=Path, nargs='?', help='XP ISO or extracted Windows directory')
     parser.add_argument('--output', type=Path, required=True,
                         help='New output directory for local sound derivatives')
+    parser.add_argument('--add-missing', action='store_true', help='Add missing roles from an existing indexed raw sound tree')
     args = parser.parse_args()
+    if args.add_missing:
+        added = add_missing_roles(args.output.resolve(strict=True))
+        print('Added sound roles: ' + (', '.join(added) or 'none; already present'))
+        return 0
+    if args.source is None:
+        parser.error('source is required unless --add-missing is used')
     for tool in ['7z']:
         if not shutil.which(tool): parser.error(f'Missing required tool: {tool}')
     source = args.source.resolve(strict=True)

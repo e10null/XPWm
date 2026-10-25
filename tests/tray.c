@@ -245,8 +245,41 @@ static gboolean check(gpointer data)
 	return G_SOURCE_CONTINUE;
 }
 
+static void verify_battery_warnings(void)
+{
+ char *root=g_dir_make_tmp("xpwm-ac-fixture-XXXXXX",NULL),*saved_battery=battery_path;
+ g_assert_nonnull(root);battery_path=g_build_filename(root,"BAT0",NULL);
+ char *adapter=g_build_filename(root,"AC",NULL),*path=g_build_filename(adapter,"online",NULL);
+ g_mkdir(adapter,0700);g_assert_true(g_file_set_contents(path,"1\n",-1,NULL));g_assert_cmpint(read_ac_online(),==,1);
+ g_assert_true(g_file_set_contents(path,"0\n",-1,NULL));g_assert_cmpint(read_ac_online(),==,0);
+ g_assert_true(g_file_set_contents(path,"invalid",-1,NULL));g_assert_cmpint(read_ac_online(),==,-1);
+ g_unlink(path);g_rmdir(adapter);g_rmdir(root);g_free(root);g_free(path);g_free(adapter);
+ g_free(battery_path);battery_path=saved_battery;
+ int level=0,online=-1;
+ g_assert_cmpint(xp_power_transition(&online,-1),==,0);
+ g_assert_cmpint(xp_power_transition(&online,1),==,0);
+ g_assert_cmpint(xp_power_transition(&online,1),==,0);
+ g_assert_cmpint(xp_power_transition(&online,0),==,-1);
+ g_assert_cmpint(xp_power_transition(&online,-1),==,0);
+ g_assert_cmpint(xp_power_transition(&online,0),==,0);
+ g_assert_cmpint(xp_power_transition(&online,1),==,1);
+ g_assert_cmpint(xp_battery_warning(&level,50,1),==,0);
+ g_assert_cmpint(xp_battery_warning(&level,20,1),==,1);
+ g_assert_cmpint(xp_battery_warning(&level,19,1),==,0);
+ g_assert_cmpint(xp_battery_warning(&level,21,1),==,0);
+ g_assert_cmpint(xp_battery_warning(&level,-1,1),==,0);
+ g_assert_cmpint(xp_battery_warning(&level,5,1),==,2);
+ g_assert_cmpint(xp_battery_warning(&level,4,1),==,0);
+ g_assert_cmpint(xp_battery_warning(&level,4,0),==,0);
+ g_assert_cmpint(level,==,0);
+ g_assert_cmpint(xp_battery_warning(&level,4,1),==,2);
+ xp_battery_warning(&level,26,1);
+ g_assert_cmpint(xp_battery_warning(&level,20,1),==,1);
+ g_print("PASS: low/critical discharge warnings, deduplication, hysteresis and AC reset\n");
+}
 int main(int argc, char **argv)
 {
+ verify_battery_warnings();
 	luna_init(); gtk_init(&argc, &argv);
 	char *backlight_fixture = fixture("backlight"); brightness_root = backlight_fixture;
 	GtkWidget *canvas = gtk_drawing_area_new();

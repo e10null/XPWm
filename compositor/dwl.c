@@ -1563,6 +1563,7 @@ focusclient(Client *c, int lift)
 
 	if (c && c->minimized) {
 		c->minimized = 0;
+  spawn(&(Arg)SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-sound\" restore"));
 #ifdef XWAYLAND
 		if (client_is_x11(c))
 			wlr_xwayland_surface_set_minimized(c->surface.xwayland, 0);

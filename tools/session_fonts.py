@@ -38,7 +38,7 @@ def font_dpi():
         dpi = settings.getint('Appearance', 'FontDPI', fallback=96)
     except (ValueError, configparser.Error):
         return 96
-    return dpi if dpi in (96, 120, 144) else 96
+    return dpi if dpi in (72, 84, 96, 120, 144) else 96
 
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@
 #include <gtk/gtk.h>
 #include <gtk-layer-shell.h>
 #include "notifications.h"
+#include "../shared/sounds.h"
 
 #define SERVICE "org.freedesktop.Notifications"
 #define OBJECT "/org/freedesktop/Notifications"
@@ -12,6 +13,8 @@ typedef struct {
 	char **actions;
 	int timeout;
 	guchar urgency;
+ gboolean silent, sounded, battery;
+ int power_event;
 } Notification;
 
 static GDBusConnection *connection;
@@ -199,10 +202,22 @@ static void render(void)
 	if (timeout > 0) timer = g_timeout_add(timeout, expire, NULL);
 }
 
+static void play_notification_sound(Notification *n)
+{ if(!n->silent && n->urgency>0 && !n->sounded) {
+  static gint64 last_sound;gint64 now=g_get_monotonic_time();
+  if(n->power_event || n->battery || n->urgency==2 || now-last_sound>2*G_USEC_PER_SEC) {
+   xp_sound_play(n->power_event>0?XPWM_SOUND_DEVICE_CONNECT:n->power_event<0?XPWM_SOUND_DEVICE_DISCONNECT:
+    n->urgency==2?XPWM_SOUND_CRITICAL:n->battery?XPWM_SOUND_WARNING:XPWM_SOUND_NOTIFY);last_sound=now;
+  }
+ }
+ n->sounded=TRUE;
+}
+
 static void show_next(void)
 {
-	if (active || g_queue_is_empty(&pending)) return;
+	if (!connection || active || g_queue_is_empty(&pending)) return;
 	active = g_queue_pop_head(&pending);
+ play_notification_sound(active);
 	render();
 }
 
@@ -213,7 +228,7 @@ static void method_call(GDBusConnection *bus, const char *sender, const char *pa
 	if (!strcmp(method, "GetServerInformation")) {
 		g_dbus_method_invocation_return_value(invocation, g_variant_new("(ssss)", "XPWm Balloons", "XPWm", "1.0", "1.2"));
 	} else if (!strcmp(method, "GetCapabilities")) {
-		const char *caps[] = {"body", "actions", NULL};
+		const char *caps[] = {"body", "actions", "sound", NULL};
 		g_dbus_method_invocation_return_value(invocation, g_variant_new("(^as)", caps));
 	} else if (!strcmp(method, "CloseNotification")) {
 		guint id; g_variant_get(parameters, "(u)", &id);
@@ -242,6 +257,7 @@ static void method_call(GDBusConnection *bus, const char *sender, const char *pa
 		n->body = g_utf8_substring(body, 0, MIN(4096, g_utf8_strlen(body, -1)));
 		n->actions = actions; n->timeout = timeout; n->urgency = 1;
 		g_variant_lookup(hints, "urgency", "y", &n->urgency);
+  n->silent=FALSE;g_variant_lookup(hints,"suppress-sound","b",&n->silent);
 		g_variant_unref(hints);
 		g_dbus_method_invocation_return_value(invocation, g_variant_new("(u)", n->id));
 		if (n == active) render(); else show_next();
@@ -254,6 +270,43 @@ static void acquired(GDBusConnection *bus, const char *name, gpointer data)
 {
 	connection = g_object_ref(bus);
 	registration = g_dbus_connection_register_object(bus, OBJECT, introspection->interfaces[0], &vtable, NULL, NULL, NULL);
+ show_next();
+}
+
+void xp_notifications_battery_clear(void)
+{
+ for(GList *l=pending.head,*next;l;l=next) {
+  next=l->next;Notification *n=l->data;
+  if(n->battery){g_queue_delete_link(&pending,l);free_notification(n);}
+ }
+ if(active && active->battery)close_notification(active,3);
+}
+
+void xp_notifications_battery(int critical,int percent)
+{
+ xp_notifications_battery_clear();
+ Notification *n=g_new0(Notification,1);n->battery=TRUE;
+ do {next_id++;}while(!next_id || find_notification(next_id));n->id=next_id;
+ n->summary=g_strdup(critical?"Critical Battery":"Low Battery");
+ n->body=g_strdup_printf(critical?"Your battery is at %d%%. Connect AC power now and save your work.":"Your battery is at %d%%. Connect AC power soon.",percent);
+ n->urgency=critical?2:1;n->timeout=critical?0:15000;
+ if(active && (critical || active->urgency<2)) {
+  if(timer){g_source_remove(timer);timer=0;}
+  gtk_widget_hide(balloon);g_queue_push_head(&pending,active);active=NULL;
+ }
+ g_queue_push_head(&pending,n);show_next();
+}
+
+void xp_notifications_power(int plugged,int percent)
+{
+ Notification *n=g_new0(Notification,1);
+ do {next_id++;}while(!next_id || find_notification(next_id));n->id=next_id;
+ n->power_event=plugged?1:-1;
+ n->summary=g_strdup(plugged?"AC Power Connected":"Running on Battery");
+ n->body=percent>=0?g_strdup_printf(plugged?"Your computer is plugged in. Battery: %d%%.":"AC power was disconnected. Battery: %d%%.",percent):
+  g_strdup(plugged?"Your computer is now using AC power.":"Your computer is now using battery power.");
+ n->urgency=1;n->timeout=5000;
+ g_queue_push_tail(&pending,n);show_next();
 }
 
 void xp_notifications_start(void)

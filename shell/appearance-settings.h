@@ -7,6 +7,8 @@ static GtkWidget *appearance_page(GtkWidget *dialog) {
  GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,12),*combo=gtk_combo_box_text_new();
  gtk_container_set_border_width(GTK_CONTAINER(box),12);
  gtk_box_pack_start(GTK_BOX(box),gtk_label_new("Font size (DPI):"),FALSE,FALSE,0);
+ gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo),"72","Extra small — 75% (72 DPI)");
+ gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo),"84","Small — 87.5% (84 DPI)");
  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo),"96","Normal — 100% (96 DPI)");
  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo),"120","Large — 125% (120 DPI)");
  gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo),"144","Extra large — 150% (144 DPI)");

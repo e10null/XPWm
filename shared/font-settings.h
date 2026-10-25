@@ -11,7 +11,7 @@ static inline int xp_font_dpi_read(void)
  GKeyFile *key=g_key_file_new();char *path=xp_font_settings_path();int dpi=96;
  if(g_key_file_load_from_file(key,path,G_KEY_FILE_NONE,NULL)) {
   int value=g_key_file_get_integer(key,"Appearance","FontDPI",NULL);
-  if(value==96 || value==120 || value==144)dpi=value;
+  if(value==72 || value==84 || value==96 || value==120 || value==144)dpi=value;
  }
  g_key_file_unref(key);g_free(path);return dpi;
 }
@@ -29,7 +29,7 @@ static inline int xp_font_dpi(void)
 static inline gboolean xp_font_dpi_save(int dpi,GError **error)
 {
  GKeyFile *key;char *path,*directory,*contents;gboolean ok;
- if(dpi!=96 && dpi!=120 && dpi!=144){g_set_error_literal(error,G_FILE_ERROR,G_FILE_ERROR_INVAL,"Unsupported font DPI");return FALSE;}
+ if(dpi!=72 && dpi!=84 && dpi!=96 && dpi!=120 && dpi!=144){g_set_error_literal(error,G_FILE_ERROR,G_FILE_ERROR_INVAL,"Unsupported font DPI");return FALSE;}
  key=g_key_file_new();path=xp_font_settings_path();directory=g_path_get_dirname(path);
  g_key_file_load_from_file(key,path,G_KEY_FILE_NONE,NULL);g_key_file_set_integer(key,"Appearance","FontDPI",dpi);
  ok=g_mkdir_with_parents(directory,0700)==0;

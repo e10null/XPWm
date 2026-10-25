@@ -370,6 +370,7 @@ static void toggle_start(GdkEvent *event)
 	set_hidden(FALSE);
 	GdkRectangle anchor = {0, 0, START_WIDTH, BAR_HEIGHT};
 	start_menu = start_menu_new();
+ xp_sound_play(XPWM_SOUND_MENU);
 	menu_keyboard(TRUE);
 	gtk_menu_attach_to_widget(GTK_MENU(start_menu), canvas, NULL);
 	g_signal_connect(start_menu, "selection-done", G_CALLBACK(menu_closed), NULL);

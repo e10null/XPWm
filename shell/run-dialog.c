@@ -12,6 +12,8 @@ static GtkWidget *suggestion_frame,*suggestion_view,*suggestion_popup;
 static GtkListStore *suggestion_store;
 static GPtrArray *suggestions;
 static GCancellable *scan_cancel;
+static char *completed_command;
+static gboolean force_raw;
 
 static void refresh_suggestions(void)
 {
@@ -21,7 +23,7 @@ static void refresh_suggestions(void)
  for(guint i=0;i<matches->len;i++) {
   RunSuggestion *item=g_ptr_array_index(matches,i);GtkTreeIter iter;
   gtk_list_store_append(suggestion_store,&iter);
-  gtk_list_store_set(suggestion_store,&iter,0,item->command,-1);
+  gtk_list_store_set(suggestion_store,&iter,0,item->label,1,item->command,-1);
  }
  gboolean show=matches->len>0 && *gtk_entry_get_text(GTK_ENTRY(entry));
  gtk_widget_set_size_request(suggestion_frame,MAX(220,gtk_widget_get_allocated_width(entry)),MIN(matches->len,6)*22+4);
@@ -39,10 +41,11 @@ static void refresh_suggestions(void)
 static gboolean complete_selected(void)
 {
  if(!suggestion_frame || !gtk_widget_get_visible(suggestion_frame))return FALSE;
- GtkTreeIter iter;GtkTreeModel *model;char *command=NULL;
+ GtkTreeIter iter;GtkTreeModel *model;char *command=NULL,*label=NULL;
  if(!gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(suggestion_view)),&model,&iter))return FALSE;
- gtk_tree_model_get(model,&iter,0,&command,-1);
- gtk_entry_set_text(GTK_ENTRY(entry),command);gtk_editable_set_position(GTK_EDITABLE(entry),-1);g_free(command);
+ gtk_tree_model_get(model,&iter,0,&label,1,&command,-1);
+ gtk_entry_set_text(GTK_ENTRY(entry),label);gtk_editable_set_position(GTK_EDITABLE(entry),-1);
+ g_free(completed_command);completed_command=command;g_free(label);
  gtk_widget_hide(suggestion_popup);gtk_widget_hide(suggestion_frame);
  return TRUE;
 }
@@ -54,11 +57,17 @@ static gboolean suggestion_focus_out(GtkWidget *widget,GdkEventFocus *event,gpoi
 static gboolean suggestion_key(GtkWidget *widget,GdkEventKey *event,gpointer data)
 {
  (void)widget;(void)data;
- if(event->state&(GDK_CONTROL_MASK|GDK_MOD1_MASK|GDK_SUPER_MASK))return FALSE;
+ if((event->keyval==GDK_KEY_Return || event->keyval==GDK_KEY_KP_Enter) && (event->state&GDK_SHIFT_MASK)) {
+  force_raw=TRUE;g_clear_pointer(&completed_command,g_free);
+  gtk_dialog_response(GTK_DIALOG(dialog),GTK_RESPONSE_OK);force_raw=FALSE;return TRUE;
+ }
+ gboolean next=(event->state&GDK_CONTROL_MASK) && (event->keyval==GDK_KEY_n || event->keyval==GDK_KEY_j);
+ gboolean previous=(event->state&GDK_CONTROL_MASK) && (event->keyval==GDK_KEY_p || event->keyval==GDK_KEY_k);
+ if((event->state&(GDK_MOD1_MASK|GDK_SUPER_MASK)) || ((event->state&GDK_CONTROL_MASK) && !next && !previous))return FALSE;
  if(event->keyval==GDK_KEY_Escape) {
   gtk_dialog_response(GTK_DIALOG(dialog),GTK_RESPONSE_CANCEL);return TRUE;
  }
- if(event->keyval==GDK_KEY_Down || event->keyval==GDK_KEY_Up) {
+ if(event->keyval==GDK_KEY_Down || event->keyval==GDK_KEY_Up || next || previous) {
   if(!gtk_widget_get_visible(suggestion_frame)){refresh_suggestions();return TRUE;}
   GtkTreeSelection *selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(suggestion_view));
   GtkTreeModel *model=GTK_TREE_MODEL(suggestion_store);GtkTreeIter iter;
@@ -67,7 +76,7 @@ static gboolean suggestion_key(GtkWidget *widget,GdkEventKey *event,gpointer dat
   if(gtk_tree_selection_get_selected(selection,NULL,&iter)) {
    GtkTreePath *path=gtk_tree_model_get_path(model,&iter);index=gtk_tree_path_get_indices(path)[0];gtk_tree_path_free(path);
   }
-  index=(index+(event->keyval==GDK_KEY_Down ? 1 : count-1)+count)%count;
+  index=(index+((event->keyval==GDK_KEY_Down || next) ? 1 : count-1)+count)%count;
   GtkTreePath *path=gtk_tree_path_new_from_indices(index,-1);
   gtk_tree_view_set_cursor(GTK_TREE_VIEW(suggestion_view),path,NULL,FALSE);
   gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(suggestion_view),path,NULL,FALSE,0,0);gtk_tree_path_free(path);
@@ -87,7 +96,9 @@ static void scan_input_free(gpointer data)
 static void scan_worker(GTask *task,gpointer source,gpointer data,GCancellable *cancel)
 {
  ScanInput *input=data;(void)source;
- g_task_return_pointer(task,run_suggestions_scan(input->path,input->history,cancel),(GDestroyNotify)g_ptr_array_unref);
+ GPtrArray *items=run_suggestions_scan(input->path,input->history,cancel);
+ run_suggestions_add_apps(items,cancel);
+ g_task_return_pointer(task,items,(GDestroyNotify)g_ptr_array_unref);
 }
 static void scan_ready(GObject *source,GAsyncResult *result,gpointer data)
 {
@@ -109,6 +120,7 @@ static gboolean run_icon(GtkWidget *widget, cairo_t *cr, gpointer data)
 
 static void changed(GtkEditable *editable, gpointer data)
 {
+ g_clear_pointer(&completed_command,g_free);
 	char *value = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
 	gtk_dialog_set_response_sensitive(GTK_DIALOG(dialog), GTK_RESPONSE_OK, *g_strstrip(value) != '\0');
 	gtk_widget_hide(message);
@@ -134,7 +146,8 @@ static void browse_response(GtkDialog *window, gint response, gpointer data)
 static void response(GtkDialog *window, gint response_id, gpointer data)
 {
 	GError *error = NULL;
- if(response_id==GTK_RESPONSE_OK)complete_selected();
+ if(response_id==GTK_RESPONSE_OK && !force_raw)complete_selected();
+ const char *launch_command=completed_command?completed_command:gtk_entry_get_text(GTK_ENTRY(entry));
 	if (response_id == GTK_RESPONSE_APPLY) {
 		if (chooser) { gtk_window_present(GTK_WINDOW(chooser)); return; }
 		chooser = gtk_file_chooser_dialog_new("Browse", GTK_WINDOW(dialog), GTK_FILE_CHOOSER_ACTION_OPEN,
@@ -146,7 +159,7 @@ static void response(GtkDialog *window, gint response_id, gpointer data)
 		return;
 	}
 	if (response_id == GTK_RESPONSE_OK &&
-			!run_command_launch(gtk_entry_get_text(GTK_ENTRY(entry)), &error)) {
+			!run_command_launch(launch_command, &error)) {
 		xp_sound_play(XPWM_SOUND_ERROR);
 		gtk_label_set_text(GTK_LABEL(message), error ? error->message : "Unable to start program.");
 		g_clear_error(&error);
@@ -155,7 +168,7 @@ static void response(GtkDialog *window, gint response_id, gpointer data)
 		return;
 	}
 	if (response_id == GTK_RESPONSE_OK) {
-  const char *command = gtk_entry_get_text(GTK_ENTRY(entry));
+  const char *command = launch_command;
   run_history_record(command, NULL);
   char *uri = run_command_target_uri(command);
   if (uri) {
@@ -174,6 +187,7 @@ static void destroyed(GtkWidget *widget, gpointer data)
 	gtk_style_context_remove_provider_for_screen(gtk_widget_get_screen(widget), GTK_STYLE_PROVIDER(data));
  if(scan_cancel)g_cancellable_cancel(scan_cancel);
  g_clear_object(&scan_cancel);g_clear_pointer(&suggestions,g_ptr_array_unref);
+ g_clear_pointer(&completed_command,g_free);
  if(suggestion_popup)gtk_widget_destroy(suggestion_popup);
  suggestion_frame=suggestion_view=suggestion_popup=NULL;suggestion_store=NULL;
 	dialog = entry = message = NULL;
@@ -219,6 +233,7 @@ GtkWidget *run_dialog_open(void)
  for (guint i = 0; commands[i]; i++) gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(history), commands[i]);
  g_strfreev(commands);
  entry = gtk_bin_get_child(GTK_BIN(history));
+ gtk_widget_set_tooltip_text(entry,"Search apps, commands and history. Arrows or Ctrl+N/P select; Tab completes; Enter launches; Shift+Enter runs your exact text.");
  g_object_set_data(G_OBJECT(dialog), "run-history-combo", history);
  gtk_widget_set_hexpand(history, TRUE);
 	gtk_label_set_mnemonic_widget(GTK_LABEL(label), entry);
@@ -235,7 +250,7 @@ GtkWidget *run_dialog_open(void)
  gtk_popover_set_position(GTK_POPOVER(suggestion_popup),GTK_POS_BOTTOM);
  gtk_widget_set_name(suggestion_popup,"xpwm-run-dropdown");
  gtk_container_add(GTK_CONTAINER(suggestion_popup),suggestion_frame);
- suggestion_store=gtk_list_store_new(1,G_TYPE_STRING);
+ suggestion_store=gtk_list_store_new(2,G_TYPE_STRING,G_TYPE_STRING);
  suggestion_view=gtk_tree_view_new_with_model(GTK_TREE_MODEL(suggestion_store));g_object_unref(suggestion_store);
  gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(suggestion_view),FALSE);
  gtk_tree_view_set_enable_search(GTK_TREE_VIEW(suggestion_view),FALSE);

@@ -1,5 +1,30 @@
 /* Real D-Bus clients and a headless native balloon surface. */
+#include "../shared/sounds.h"
+static int sound_count;
+static enum XpwmSound last_sound;
+static void test_sound(enum XpwmSound sound){sound_count++;last_sound=sound;}
+#define xp_sound_play test_sound
 #include "../shell/notifications.c"
+#undef xp_sound_play
+static void verify_sound_policy(void)
+{
+ Notification n={.urgency=1};play_notification_sound(&n);
+ g_assert_cmpint(sound_count,==,1);g_assert_cmpint(last_sound,==,XPWM_SOUND_NOTIFY);
+ play_notification_sound(&n);g_assert_cmpint(sound_count,==,1);
+ n=(Notification){.urgency=2,.silent=TRUE};play_notification_sound(&n);g_assert_cmpint(sound_count,==,1);
+ n=(Notification){.urgency=0};play_notification_sound(&n);g_assert_cmpint(sound_count,==,1);
+ n=(Notification){.urgency=1};play_notification_sound(&n);g_assert_cmpint(sound_count,==,1);
+ n=(Notification){.urgency=2,.battery=TRUE};play_notification_sound(&n);
+ g_assert_cmpint(sound_count,==,2);g_assert_cmpint(last_sound,==,XPWM_SOUND_CRITICAL);
+ n=(Notification){.urgency=1,.battery=TRUE};play_notification_sound(&n);
+ g_assert_cmpint(sound_count,==,3);g_assert_cmpint(last_sound,==,XPWM_SOUND_WARNING);
+ play_notification_sound(&n);g_assert_cmpint(sound_count,==,3);
+ n=(Notification){.urgency=1,.power_event=1};play_notification_sound(&n);
+ g_assert_cmpint(sound_count,==,4);g_assert_cmpint(last_sound,==,XPWM_SOUND_DEVICE_CONNECT);
+ n=(Notification){.urgency=1,.power_event=-1};play_notification_sound(&n);
+ g_assert_cmpint(sound_count,==,5);g_assert_cmpint(last_sound,==,XPWM_SOUND_DEVICE_DISCONNECT);
+ g_print("PASS: notification sounds, silent hints, low urgency, replacement deduplication and burst cooldown\n");
+}
 #include "../shared/luna.h"
 
 static guint closed_id, closed_reason, action_id;
@@ -7,7 +32,23 @@ static char *action_key;
 
 static gboolean inspect(gpointer data)
 {
-	if (!active) return G_SOURCE_CONTINUE;
+	static gboolean battery_checked;
+ if(connection && !battery_checked) {
+  battery_checked=TRUE;
+  xp_notifications_battery(0,20);g_assert_nonnull(active);g_assert_true(active->battery);
+  g_assert_cmpint(active->urgency,==,1);
+  xp_notifications_battery(1,5);g_assert_true(active->battery);
+  g_assert_cmpint(active->urgency,==,2);g_assert_cmpuint(timer,==,0);
+  xp_notifications_battery_clear();g_assert_true(!active || !active->battery);
+  for(GList *l=pending.head;l;l=l->next)g_assert_false(((Notification *)l->data)->battery);
+  xp_notifications_power(1,80);Notification *power=find_notification(next_id);
+  g_assert_nonnull(power);g_assert_cmpstr(power->summary,==,"AC Power Connected");g_assert_cmpint(power->timeout,==,5000);
+  close_notification(power,3);
+  xp_notifications_power(0,80);power=find_notification(next_id);
+  g_assert_nonnull(power);g_assert_cmpstr(power->summary,==,"Running on Battery");close_notification(power,3);
+  g_print("PASS: battery balloons, critical escalation, AC clearing and plug/unplug notifications\n");
+ }
+ if (!active) return G_SOURCE_CONTINUE;
 	g_assert_cmpint(gtk_layer_get_keyboard_mode(GTK_WINDOW(balloon)), ==, GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
 	g_assert_cmpint(gtk_layer_get_exclusive_zone(GTK_WINDOW(balloon)), ==, -1);
 	g_assert_cmpint(gtk_widget_get_allocated_width(balloon), >=, 320);
@@ -67,7 +108,7 @@ static void wait_closed(guint id, guint reason)
 int main(int argc, char **argv)
 {
 	if (argc > 1 && !strcmp(argv[1], "--server")) {
-		luna_init(); gtk_init(&argc, &argv);
+		luna_init(); gtk_init(&argc, &argv);verify_sound_policy();
 		g_setenv("XPWM_SESSION_BUS", "1", TRUE);
 		xp_notifications_start(); g_timeout_add(80, inspect, NULL);
 		gtk_main(); xp_notifications_stop(); return 0;

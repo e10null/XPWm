@@ -18,8 +18,39 @@ class SoundPreparationTests(unittest.TestCase):
         from prepare_sounds import role_for
         for name, expected in [('XPMIN', 'minimize'), ('XPRESTOR', 'restore'),
                                ('XPSTART', 'navigation'), ('XPEXCL', 'warning'),
-                               ('XPCRTSTP', 'critical'), ('XPDEF', 'default')]:
+                               ('XPCRTSTP', 'critical'), ('XPDEF', 'default'),
+                               ('XPHDINST', 'device-connect'), ('XPHDREM', 'device-disconnect')]:
             self.assertEqual(role_for('I386/'+name+'.WA_'), expected)
+
+    def test_add_missing_preserves_existing_sounds(self):
+        sys.path.insert(0, str(ROOT / 'tools'))
+        from prepare_sounds import add_missing_roles
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / 'source', root / 'out'
+            source.mkdir()
+            for name in ['Windows XP Logon Sound.wav', 'Windows XP Hardware Insert.wav']:
+                with wave.open(str(source / name), 'wb') as stream:
+                    stream.setparams((1, 2, 8000, 0, 'NONE', 'not compressed'))
+                    stream.writeframes(b'\0\0' * 80)
+            subprocess.run([sys.executable, 'tools/prepare_sounds.py', str(source),
+                            '--output', str(output)], cwd=ROOT, capture_output=True, check=True)
+            original = (output / 'logon.wav').read_bytes()
+            (output / 'device-connect.wav').unlink()
+            index_path = output / 'index.json'
+            index = json.loads(index_path.read_text())
+            for record in index['sounds']:
+                if record['role'] == 'device-connect':
+                    record['role'] = None
+                    record.pop('selected', None)
+                    record.pop('decoded_file', None)
+            index_path.write_text(json.dumps(index))
+            self.assertEqual(add_missing_roles(output), ['device-connect'])
+            self.assertEqual((output / 'logon.wav').read_bytes(), original)
+            self.assertEqual(add_missing_roles(output), [])
+            index = json.loads(index_path.read_text())
+            self.assertTrue(any(r.get('selected') and r['role'] == 'device-connect'
+                                for r in index['sounds']))
 
     def test_wav_role_and_provenance(self):
         with tempfile.TemporaryDirectory(prefix="xpwm-sounds-") as directory:

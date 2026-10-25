@@ -1,6 +1,8 @@
 #include "../shared/font-settings.h"
 /* XP notification-area controls. All service calls run off the GTK event loop. */
 #include "tray.h"
+#include "notifications.h"
+#include "battery-warnings.h"
 #include "xp-style.h"
 #include "../shared/luna.h"
 #include <math.h>
@@ -246,16 +248,53 @@ static void got_network(gboolean ok, const char *output)
 	update_ui();
 }
 
+static int battery_warning_level,battery_ac_state=-1;
+static int read_ac_online(void)
+{
+ char *root=g_path_get_dirname(battery_path);GDir *dir=g_dir_open(root,0,NULL);
+ const char *name;int online=-1;
+ while(dir && (name=g_dir_read_name(dir))) {
+  char *device=g_build_filename(root,name,NULL),*value=NULL;
+  if(strcmp(device,battery_path)) {
+   char *path=g_build_filename(device,"online",NULL);
+   if(g_file_get_contents(path,&value,NULL,NULL)) {
+    g_strstrip(value);
+    if(!strcmp(value,"1")){online=1;g_free(value);g_free(path);g_free(device);break;}
+    if(!strcmp(value,"0"))online=0;
+   }
+   g_free(value);g_free(path);
+  }
+  g_free(device);
+ }
+ if(dir)g_dir_close(dir);
+ g_free(root);return online;
+}
 static void read_battery(void)
 {
 	if (!battery_path) return;
 	char *path = g_build_filename(battery_path, "capacity", NULL), *value = NULL, *status = NULL;
 	capacity = -1;
-	if (g_file_get_contents(path, &value, NULL, NULL)) capacity = CLAMP(atoi(value), 0, 100);
+	if (g_file_get_contents(path, &value, NULL, NULL)) {
+  char *end;gint64 parsed=g_ascii_strtoll(value,&end,10);
+  if(end!=value && !*g_strstrip(end) && parsed>=0 && parsed<=100)capacity=(int)parsed;
+ }
 	g_free(path); g_free(value);
 	path = g_build_filename(battery_path, "status", NULL);
 	g_file_get_contents(path, &status, NULL, NULL); g_free(path);
 	if (status) g_strstrip(status);
+ int online=read_ac_online();
+ if(online<0 && status) {
+  if(!strcmp(status,"Discharging"))online=0;
+  else if(!strcmp(status,"Charging") || !strcmp(status,"Full") || !strcmp(status,"Not charging"))online=1;
+ }
+ if(online==1)xp_notifications_battery_clear();
+ int transition=xp_power_transition(&battery_ac_state,online);
+ if(transition)xp_notifications_power(transition>0,capacity);
+ if(status && strcmp(status,"Unknown") && capacity>=0) {
+  if(strcmp(status,"Discharging"))xp_notifications_battery_clear();
+  int warning=xp_battery_warning(&battery_warning_level,capacity,!strcmp(status,"Discharging"));
+  if(warning)xp_notifications_battery(warning==2,capacity);
+ }
 	g_free(battery_text);
 	battery_text = capacity >= 0 ? g_strdup_printf("Battery: %d%%\n%s", capacity, status ? status : "Unknown") : g_strdup("Battery unavailable");
 	g_free(status);

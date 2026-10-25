@@ -18,6 +18,8 @@ enum XpwmSound {
 	XPWM_SOUND_WARNING,
 	XPWM_SOUND_CRITICAL,
 	XPWM_SOUND_DEFAULT,
+ XPWM_SOUND_DEVICE_CONNECT,
+ XPWM_SOUND_DEVICE_DISCONNECT,
 };
 
 void xp_sound_play(enum XpwmSound sound);

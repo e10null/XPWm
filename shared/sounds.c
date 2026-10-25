@@ -22,6 +22,8 @@ static const Sound sound_table[] = {
 	{XPWM_SOUND_WARNING, "warning.wav"},
 	{XPWM_SOUND_CRITICAL, "critical.wav"},
 	{XPWM_SOUND_DEFAULT, "default.wav"},
+ {XPWM_SOUND_DEVICE_CONNECT, "device-connect.wav"},
+ {XPWM_SOUND_DEVICE_DISCONNECT, "device-disconnect.wav"},
 };
 
 static const char *sound_file(enum XpwmSound sound)

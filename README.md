@@ -20,7 +20,9 @@ close button and optional action buttons. The session launcher gives XPWm its
 own D-Bus session, including when nested, so these notifications stay in XPWm.
 The service implements the [freedesktop notification protocol](https://specifications.freedesktop.org/notification/latest/protocol.html).
 Try `notify-send "Windows XP" "Your notification balloons are ready."` inside
-the XPWm session. Balloons queue, support updates and expiry, and stay quiet.
+the XPWm session. Balloons queue, support updates and expiry, and play XP notification sounds.
+Low-priority balloons and requests with `suppress-sound` stay silent; ordinary
+notification sounds have a two-second cooldown, while critical alerts bypass it.
 See [Luna rendering](docs/LUNA_RENDERING.md) for preparation and remaining gaps.
 
 `make nested` and `make tty` now begin with the XP Welcome surface
@@ -31,8 +33,19 @@ buttons, a dimmed desktop and modal input. Log Off then shows a matching
 replace PAM or the display manager; set `XPWM_SKIP_LOGON=1` for unattended runs.
 Optional XP event sounds are extracted from private media with
 `tools/prepare_sounds.py` and played through the host's `pw-play`, `paplay` or
-`aplay` when available. Default sounds are limited to startup/logon/logoff/shutdown and errors.
-Opening menus/apps and moving between window states stays quiet; set `XPWM_SOUND_MUTE=1` to mute.
+`aplay` when available. Event sounds cover startup/logon/logoff/shutdown, errors, notification balloons,
+opening Start, launching apps/folders from Start, and minimizing/maximizing/restoring
+windows. Menu hovering stays silent. Set `XPWM_SOUND_MUTE=1` to mute all event sounds.
+The tray warns once at 20% and again at 5% while discharging, using XP warning and
+critical sounds. Critical battery balloons remain until dismissed or AC is connected.
+Warnings clear on AC and rearm after connecting power or recharging above 25%.
+Plugging and unplugging AC power also shows a short balloon and plays the
+original XP Hardware Insert/Remove recording after a detected change; initial login readings stay quiet. Adapter online status is used even
+when a full battery is not charging.
+These warnings do not suspend or shut down the machine.
+Turn Off, Restart and Stand By call the login1 D-Bus service directly (elogind
+on OpenRC, or systemd-logind), with interactive authorization. No `systemctl`
+command is required; failed requests leave the panel open with an error.
 
 The session launcher applies **XPWm Luna Blue** before starting the compositor,
 so GTK apps opened through both shortcuts and Start/Run inherit it,
@@ -230,9 +243,12 @@ semantics are not yet XP-exact; see [shell notes](shell/README.md).
 See [decoration notes](docs/DECORATIONS.md) for provisional metrics
 and remaining limitations.
 Run keeps its compact XP dialog size and shows a dropdown only while typing,
-listing executable commands from PATH and previous successful commands.
-Type to filter with prefix or fuzzy matching; use Up/Down to select, Tab to fill
-in a command (then add arguments), and Enter or a click to launch. Escape closes Run. Discovery runs in the
+searching installed app names, executable commands from PATH and previous
+successful commands. App keywords and multi-word fuzzy queries are supported.
+Use Up/Down or Ctrl+N/P (also Ctrl+J/K) to select, Tab to complete, and Enter or a
+click to launch. Shift+Enter runs the text exactly as typed. Selected apps use
+GIO desktop-entry launching, including their original launch options. Escape
+closes Run. Discovery runs in the
 background each time Run opens. The original history dropdown remains available.
 
 From an existing Wayland session, launch an isolated nested desktop:
@@ -428,14 +444,16 @@ hours, and temperature are saved in `~/.config/xpwm/night-light.ini` and restore
 at login. It uses the compositor gamma-control protocol; nested sessions depend
 on the host compositor/output supporting gamma changes.
 
-Desktop right-click → Properties → Appearance offers Normal (96 DPI), Large
-(120 DPI), and Extra large (144 DPI) font sizes. The choice is saved in
+Desktop right-click → Properties → Appearance offers Extra small (72 DPI),
+Small (84 DPI), Normal (96 DPI), Large (120 DPI), and Extra large (144 DPI) font sizes. The choice is saved in
 `~/.config/xpwm/appearance.ini`. GTK 3 applications in the XPWm session, desktop
 labels, taskbar labels and window captions update live; new Qt applications
 inherit the selected font DPI. Existing Qt applications may need reopening.
 Fixed XP logo/Welcome artwork retains its original metrics. This adjusts text
 rather than screen resolution. For larger icons and the whole interface, use
 the separate Settings → Display scaling control.
+GTK text uses full hinting without antialiasing for the selected pixelated look;
+font size and DPI are independent of this rendering choice.
 
 TTY and nested sessions retain private diagnostics in
 `~/.local/state/xpwm/session.log` (or `$XDG_STATE_HOME/xpwm/session.log`).

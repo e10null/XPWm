@@ -9,6 +9,7 @@ int main(int argc, char **argv)
 		{"error",XPWM_SOUND_ERROR}, {"minimize",XPWM_SOUND_MINIMIZE}, {"restore",XPWM_SOUND_RESTORE},
 		{"navigation",XPWM_SOUND_NAVIGATION}, {"warning",XPWM_SOUND_WARNING},
 		{"critical",XPWM_SOUND_CRITICAL}, {"default",XPWM_SOUND_DEFAULT},
+  {"device-connect",XPWM_SOUND_DEVICE_CONNECT}, {"device-disconnect",XPWM_SOUND_DEVICE_DISCONNECT},
 	};
 	for (guint i=0; i<G_N_ELEMENTS(events); i++) {
 		if (argc == 2 && !g_strcmp0(argv[1], "--list")) g_print("%s\n", events[i].name);

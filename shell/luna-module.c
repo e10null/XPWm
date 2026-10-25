@@ -43,13 +43,13 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
 	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider),
 		GTK_STYLE_PROVIDER_PRIORITY_USER + 1);
 	/* CSS alone leaves GtkSettings (and widgets deriving their own fonts) on
-	 * the host desktop's font. Keep XP metrics and standard grayscale smoothing
+	 * the host desktop's font. Keep XP metrics and the selected unsmoothed text
 	 * local to this session. Use the saved font DPI consistently with compositor
 	 * captions; monitor scaling still applies separately. */
 	g_object_set(gtk_settings_get_default(),
 		"gtk-font-name", "Tahoma 8",
   "gtk-xft-dpi", xp_font_dpi()*1024,
-		"gtk-xft-antialias", 1, "gtk-xft-hinting", 1,
+		"gtk-xft-antialias", 0, "gtk-xft-hinting", 1,
 		"gtk-xft-hintstyle", "hintfull", "gtk-xft-rgba", "none",
 		"gtk-enable-animations", FALSE,
 		"gtk-decoration-layout", "",

@@ -1,6 +1,7 @@
 /* XP-style session action dialog. Actions are explicit and never shell-parsed. */
 #include <unistd.h>
 #include "session-dialog.h"
+#include "session-power.h"
 #include "../shared/sounds.h"
 #include "../shared/luna.h"
 #include "xp-style.h"
@@ -20,13 +21,30 @@ static void show_error(GError *error)
 	g_clear_error(&error);
 }
 
+static void power_worker(GTask *task,gpointer source,gpointer data,GCancellable *cancel)
+{
+ GError *error=NULL;
+ if(xp_session_power(GPOINTER_TO_INT(data),&error))g_task_return_boolean(task,TRUE);
+ else g_task_return_error(task,error);
+}
+static void power_done(GObject *source,GAsyncResult *result,gpointer data)
+{
+ GError *error=NULL;gboolean ok=g_task_propagate_boolean(G_TASK(result),&error);
+ if(!g_object_get_data(source,"xp-panel-destroyed")) {
+  gtk_widget_set_sensitive(GTK_WIDGET(source),TRUE);
+  if(ok)gtk_widget_destroy(GTK_WIDGET(source));
+  else if(GTK_WIDGET(source)==dialog){show_error(error);error=NULL;}
+ }
+ g_clear_error(&error);
+}
+
 static gboolean execute_action(int action, GError **error)
 {
 	const char *name, *argv[4];
 	char uid[32];
-	if (action == XPWM_SESSION_STANDBY) { name = "suspend"; argv[0] = "systemctl"; argv[1] = "suspend"; argv[2] = NULL; }
-	else if (action == XPWM_SESSION_POWEROFF) { name = "poweroff"; argv[0] = "systemctl"; argv[1] = "poweroff"; argv[2] = NULL; }
-	else if (action == XPWM_SESSION_REBOOT) { name = "reboot"; argv[0] = "systemctl"; argv[1] = "reboot"; argv[2] = NULL; }
+	if (action == XPWM_SESSION_STANDBY) { name = "suspend";  }
+	else if (action == XPWM_SESSION_POWEROFF) { name = "poweroff";  }
+	else if (action == XPWM_SESSION_REBOOT) { name = "reboot";  }
 	else {
 		name = "logoff"; g_snprintf(uid, sizeof(uid), "%u", (unsigned)getuid());
 		argv[0] = "loginctl"; argv[1] = "terminate-user"; argv[2] = uid; argv[3] = NULL;
@@ -38,6 +56,12 @@ static gboolean execute_action(int action, GError **error)
 	}
 	if (action == XPWM_SESSION_POWEROFF || action == XPWM_SESSION_REBOOT)
 		xp_sound_play(XPWM_SOUND_SHUTDOWN);
+ if(action!=XPWM_SESSION_LOGOFF) {
+  GTask *task=g_task_new(dialog,NULL,power_done,NULL);
+  g_task_set_task_data(task,GINT_TO_POINTER(action),NULL);
+  gtk_widget_set_sensitive(dialog,FALSE);
+  g_task_run_in_thread(task,power_worker);g_object_unref(task);return TRUE;
+ }
 	if (action == XPWM_SESSION_LOGOFF) {
 		char *exe = g_file_read_link("/proc/self/exe", NULL);
 		char *dir = exe ? g_path_get_dirname(exe) : NULL;
@@ -61,12 +85,13 @@ static void response(GtkDialog *window, gint response_id, gpointer data)
 	GError *error = NULL;
 	if (response_id >= XPWM_SESSION_STANDBY && response_id <= XPWM_SESSION_REBOOT) {
 		if (!execute_action(response_id, &error)) show_error(error);
-		else gtk_widget_destroy(GTK_WIDGET(window));
+		else if(g_getenv("XPWM_SESSION_DRY_RUN"))gtk_widget_destroy(GTK_WIDGET(window));
 	} else gtk_widget_destroy(GTK_WIDGET(window));
 }
 
 static void destroyed(GtkWidget *widget, gpointer data)
 {
+ g_object_set_data(G_OBJECT(widget),"xp-panel-destroyed",GINT_TO_POINTER(1));
 	if (backdrop) { gtk_widget_destroy(backdrop); backdrop = NULL; }
 	if (widget == dialog) dialog = message = NULL;
 	if (widget == logoff_dialog) logoff_dialog = logoff_message = NULL;

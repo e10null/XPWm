@@ -9,7 +9,15 @@ fi
 run_runtime=$(mktemp -d /tmp/xpwm-run-completion.XXXXXX)
 trap 'rm -rf -- "$run_runtime"' EXIT HUP INT TERM
 export XDG_RUNTIME_DIR="$run_runtime" XDG_CONFIG_HOME="$run_runtime/config" XDG_DATA_HOME="$run_runtime/data"
-mkdir -p "$run_runtime/bin"
+mkdir -p "$run_runtime/bin" "$run_runtime/data/applications"
+export XDG_DATA_DIRS="$run_runtime/data"
+cat > "$run_runtime/data/applications/xpwm-browser.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=XP Test Browser
+Exec=xpwm-apple
+Keywords=web;private;
+EOF
 printf '#!/bin/sh\nprintf apple > "$XDG_RUNTIME_DIR/launched"\n' > "$run_runtime/bin/xpwm-apple"
 printf '#!/bin/sh\nprintf apricot > "$XDG_RUNTIME_DIR/launched"\n' > "$run_runtime/bin/xpwm-apricot"
 chmod +x "$run_runtime/bin/"*

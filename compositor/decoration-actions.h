@@ -45,10 +45,12 @@ xpmaximize(Client *c, int enabled)
 		c->normalgeom = c->geom;
 		c->normalfloating = c->isfloating;
 		c->maximized = 1;
+  spawn(&(Arg)SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-sound\" restore"));
 		setfloating(c, 1);
 		resize(c, c->mon->w, 0);
 	} else {
 		c->maximized = 0;
+  spawn(&(Arg)SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-sound\" restore"));
 		resize(c, c->normalgeom, 0);
 		setfloating(c, c->normalfloating);
 	}
@@ -65,9 +67,10 @@ xpmaximize(Client *c, int enabled)
 static void
 xpminimize(Client *c)
 {
-	if (!c || !c->mon || client_is_unmanaged(c))
+	if (!c || !c->mon || c->minimized || client_is_unmanaged(c))
 		return;
 	c->minimized = 1;
+ spawn(&(Arg)SHCMD("\"${XPWM_PROJECT_ROOT:-.}/shell/xpwm-sound\" minimize"));
 #ifdef XWAYLAND
 	if (client_is_x11(c))
 		wlr_xwayland_surface_set_minimized(c->surface.xwayland, 1);

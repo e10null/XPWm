@@ -119,3 +119,6 @@ __pycache__/
 
 /compositor/font-policy-test
 /compositor/client-lifetime-test
+/shell/xpwm-font-preview
+
+/shell/power-actions-test

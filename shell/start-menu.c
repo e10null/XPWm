@@ -60,6 +60,7 @@ static void launch(GtkMenuItem *item, gpointer data)
 	/* GIO expands desktop-entry field codes; never pass Exec through a shell. */
 	g_app_info_launch(G_APP_INFO(data), NULL, G_APP_LAUNCH_CONTEXT(context), &error);
 	g_object_unref(context);
+ if(!error)xp_sound_play(XPWM_SOUND_NAVIGATION);
 	report_error(error);
 }
 
@@ -69,6 +70,7 @@ static void home(GtkMenuItem *item, gpointer data)
 	char *uri = g_filename_to_uri(data ? data : g_get_home_dir(), NULL, &error);
 	if (uri) gtk_show_uri_on_window(NULL, uri, gtk_get_current_event_time(), &error);
 	g_free(uri);
+ if(!error)xp_sound_play(XPWM_SOUND_NAVIGATION);
 	report_error(error);
 }
 
@@ -76,6 +78,7 @@ static void open_uri(GtkMenuItem *item, gpointer data)
 {
  GError *error = NULL;
  gtk_show_uri_on_window(NULL, data, gtk_get_current_event_time(), &error);
+ if(!error)xp_sound_play(XPWM_SOUND_NAVIGATION);
  report_error(error);
 }
 static void open_printers(GtkMenuItem *item, gpointer data)

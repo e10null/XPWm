@@ -6,6 +6,8 @@ clean:
 	$(MAKE) -C compositor clean
 	$(MAKE) -C shell clean
 check: all
+	$(MAKE) -C shell power-actions-test
+	./shell/power-actions-test
 	$(MAKE) -C compositor client-lifetime-test
 	./compositor/client-lifetime-test
 	$(MAKE) -C compositor font-policy-test

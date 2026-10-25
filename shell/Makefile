@@ -4,12 +4,17 @@ CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-parameter -g
 LDLIBS += $(shell pkg-config --libs $(PKGS)) -lm
 
 all: xpwm-lock xpwm-screenshot xpwm-screensaver xpwm-displayctl xpwm-taskbar xpwm-desktop xpwm-logon xpwm-logoff xpwm-theme-preview xpwm-luna-module.so xpwm-sound xpwm-run
+xpwm-font-preview: font-preview.c ../shared/font-settings.h xp-style.o luna.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) font-preview.c xp-style.o luna.o $(LDLIBS) -o $@
+power-actions-test: ../tests/power-actions.c session-power.h session-dialog.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/power-actions.c $(LDLIBS) -o $@
+
 screensaver-render-test: ../tests/screensaver-render.c screensaver-view.c gentoo-ascii.h screensaver-settings.c screensaver-view.h screensaver-settings.h ../shared/screensaver-config.h xp-style.o luna.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/screensaver-render.c xp-style.o luna.o $(LDLIBS) -o $@
-tray-test: ../tests/tray.c tray.c tray.h xp-style.o luna.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/tray.c xp-style.o luna.o $(LDLIBS) -o $@
-notifications-test: ../tests/notifications.c notifications.c notifications.h luna.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/notifications.c luna.o $(LDLIBS) -o $@
+tray-test: ../tests/tray.c tray.c tray.h battery-warnings.h xp-style.o luna.o notifications.o sound.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/tray.c xp-style.o luna.o notifications.o sound.o $(LDLIBS) -o $@
+notifications-test: ../tests/notifications.c notifications.c notifications.h luna.o sound.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/notifications.c luna.o sound.o $(LDLIBS) -o $@
 start-menu-test: ../tests/start-menu.c start-menu.c search-dialog.o run-dialog.o run-suggestions.o run-command.o run-history.o session-dialog.o xp-style.o luna.o sound.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ../tests/start-menu.c search-dialog.o run-dialog.o run-suggestions.o run-command.o run-history.o session-dialog.o xp-style.o luna.o sound.o $(LDLIBS) -o $@
 luna-render-test: ../tests/luna-render.c luna.o
@@ -34,6 +39,7 @@ xpwm-logon: logon-screen.o session-screen.o session-dialog.o xp-style.o luna.o s
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 xpwm-logoff: logoff-screen.o session-screen.o session-dialog.o xp-style.o luna.o sound.o
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+session-dialog.o: session-dialog.c session-dialog.h session-power.h
 xp-style.o: xp-style.c xp-style.h ../shared/luna.h
 desktop-files.o: desktop-files.c desktop-files.h
 desktop.o: screensaver-settings.h desktop-input-test.h desktop-surface.h desktop-files.h desktop.c xp-style.h display-settings.h
@@ -41,7 +47,7 @@ display-settings.o: display-settings.c display-settings.h xp-style.h
 taskbar-settings.o: taskbar-settings.c taskbar-settings.h
 taskbar.o: taskbar-settings.h taskbar.c tray.h notifications.h foreign-client.h ../shared/luna.h start-menu.h run-dialog.h session-dialog.h ../shared/sounds.h
 notifications.o: notifications.c notifications.h
-tray.o: tray.c tray.h xp-style.h
+tray.o: tray.c tray.h xp-style.h battery-warnings.h notifications.h
 start-menu.o: start-menu.c search-dialog.h xp-style.h start-menu.h run-dialog.h session-dialog.h ../shared/luna.h
 run-dialog.o: run-dialog.c run-dialog.h run-command.h run-history.h xp-style.h ../shared/luna.h
 run-dialog.o: run-dialog.c run-suggestions.h
@@ -62,6 +68,8 @@ foreign-client.h:
 foreign-protocol.c:
 	wayland-scanner private-code ../compositor/protocols/wlr-foreign-toplevel-management-unstable-v1.xml $@
 clean:
+	rm -f power-actions-test
+	rm -f xpwm-font-preview
 	rm -rf .lock-build
 	rm -f font-settings-test night-light-test xpwm-lock start-actions-test desktop-popup-test screenshot-test data-control-client.h data-control-protocol.c xpwm-screenshot screencopy-client.h screencopy-protocol.c xpwm-screensaver screensaver-render-test run-suggestions-test run-completion-test
 	rm -f layout-client-test desktop-render-test taskbar-groups-test desktop-files-test search-test xpwm-run xpwm-sound xpwm-luna-module.so xpwm-theme-preview xpwm-taskbar xpwm-desktop xpwm-logon xpwm-logoff luna-render-test run-command-test run-history-test run-associations-test start-menu-test notifications-test tray-test *.o foreign-client.h foreign-protocol.c output-client.h output-protocol.c xpwm-displayctl display-settings-test
