@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('wlroots-0.18', 'wayland-server', 'wayland-client', 'xkbcommon', 'libinput',
-           'cairo', 'pangocairo', 'fontconfig', 'libdrm', 'gtk+-3.0', 'gio-unix-2.0', 'gtk-layer-shell-0', 'pam', 'wayland-cursor')
+           'cairo', 'pangocairo', 'fontconfig', 'libdrm', 'gtk+-3.0', 'gio-unix-2.0', 'gtk-layer-shell-0', 'pam', 'wayland-cursor', 'xcb', 'xcb-icccm')
 BINARIES = ('xpwm-lock', 'xpwm-displayctl', 'xpwm-taskbar', 'xpwm-desktop', 'xpwm-logon',
             'xpwm-logoff', 'xpwm-theme-preview', 'xpwm-luna-module.so', 'xpwm-sound', 'xpwm-run', 'xpwm-screensaver', 'xpwm-screenshot')
 MANIFEST = Path('share/xpwm/install-manifest.json')
@@ -38,17 +38,21 @@ def dependency_command(manager):
     packages = {
         'pacman': ['gcc', 'make', 'pkgconf', 'wlroots0.18', 'wayland', 'wayland-protocols',
                    'libinput', 'libxkbcommon', 'cairo', 'pango', 'fontconfig', 'libdrm',
+                   'libxcb', 'xcb-util-wm', 'xorg-xwayland',
                    'gtk3', 'gtk-layer-shell', 'dbus', 'python', 'meson', 'ninja', 'pam'],
         'apt': ['build-essential', 'pkg-config', 'libwlroots-0.18-dev', 'libwayland-dev',
                 'wayland-protocols', 'libinput-dev', 'libxkbcommon-dev', 'libcairo2-dev',
+                'libxcb1-dev', 'libxcb-icccm4-dev', 'xwayland',
                 'libpango1.0-dev', 'libfontconfig1-dev', 'libdrm-dev', 'libgtk-3-dev',
                 'libgtk-layer-shell-dev', 'dbus', 'dbus-daemon', 'python3', 'meson', 'ninja-build', 'libpam0g-dev'],
         'dnf': ['gcc', 'make', 'pkgconf-pkg-config', 'wlroots0.18-devel', 'wayland-devel',
                 'wayland-protocols-devel', 'libinput-devel', 'libxkbcommon-devel',
+                'pkgconfig(xcb)', 'pkgconfig(xcb-icccm)', 'xorg-x11-server-Xwayland',
                 'cairo-devel', 'pango-devel', 'fontconfig-devel', 'libdrm-devel',
                 'gtk3-devel', 'gtk-layer-shell-devel', 'dbus-daemon', 'python3', 'meson', 'ninja-build', 'pam-devel'],
         'zypper': ['gcc', 'make', 'pkg-config', 'pkgconfig(wlroots-0.18)',
                    'wayland-devel', 'wayland-protocols-devel', 'libinput-devel',
+                   'pkgconfig(xcb)', 'pkgconfig(xcb-icccm)', 'xwayland',
                    'libxkbcommon-devel', 'cairo-devel', 'pango-devel', 'fontconfig-devel',
                    'libdrm-devel', 'gtk3-devel', 'gtk-layer-shell-devel', 'dbus-1', 'python3', 'meson', 'ninja', 'pam-devel'],
     }

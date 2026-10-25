@@ -189,7 +189,8 @@ package metadata; application versions and total dependency footprints can chang
 
 Dependencies: C compiler, make, pkg-config, wlroots **0.18.x** development files,
 Wayland development files and scanner, wayland-protocols, libinput, xkbcommon,
-Cairo, PangoCairo, Fontconfig and libdrm development files. The taskbar additionally needs
+Cairo, PangoCairo, Fontconfig, libdrm, xcb and xcb-icccm development files.
+X11 applications require XWayland at runtime. The taskbar additionally needs
 GTK3, gtk-layer-shell and wayland-client development files.
 The session launcher requires `dbus-run-session`; `notify-send` is optional for
 sending a test balloon.
@@ -292,15 +293,19 @@ Edit compositor/config.h for local bindings; it is copied from config.def.h
 on the first build and is not overwritten thereafter. If updating defaults,
 merge changes into your existing config.h before rebuilding.
 
-Optional XWayland build (requires xcb, xcb-icccm and runtime Xwayland):
+XWayland support is enabled by default so X11 applications can run. It requires
+xcb and xcb-icccm development files and XWayland at runtime. The X server starts
+lazily when the first X11 application connects.
+
+To build without XWayland:
 
 ```
 make clean
-make XWAYLAND=-DXWAYLAND XLIBS='xcb xcb-icccm'
+make XWAYLAND= XLIBS=
 ```
 
-Clean when switching build flags. The default build is native Wayland only.
-XWayland-enabled builds start the X server lazily for X11 clients.
+Clean when switching build flags. Run `make clean` followed by `make` to
+restore the default XWayland-enabled build.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md),
 [XP_COMPATIBILITY.md](XP_COMPATIBILITY.md) and
