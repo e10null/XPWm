@@ -88,6 +88,22 @@ def check_dependencies():
         raise ValueError(f'Expected wlroots 0.18.x, found {version}.')
 
 
+
+def desktop_exec(path, session=False):
+    text = str(path)
+    # SDDM's wayland-session wrapper executes $@ without reparsing quotes.
+    # Simple absolute paths need no Desktop Entry quotes and work there.
+    if session and all(c.isascii() and (c.isalnum() or c in '/._-') for c in text):
+        return text
+    # Application launchers (GIO/KDE) parse the Desktop Entry grammar, so
+    # retain its quoting for spaces and other reserved characters.
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%') + '"'
+
+
+def session_entry(prefix):
+    return ('[Desktop Entry]\nName=XPWm\nComment=Windows XP-inspired Wayland desktop built on dwl\n'
+            f'Exec={desktop_exec(prefix / "bin/xpwm", session=True)} tty\nType=Application\n').encode()
+
 def installed_files(prefix):
     """An explicit runtime allowlist: never copy private assets or the checkout."""
     files = {Path('compositor/dwl'): ROOT / 'compositor/dwl'}
@@ -115,11 +131,7 @@ if [ -d "$asset_root/assets/local" ]; then export XPWM_ASSET_ROOT="$asset_root";
     result[Path('bin/xpwm-screenshot')] = (
         f'#!/bin/sh\nset -eu\n{asset_setup}export XPWM_PROJECT_ROOT={bundle_quote}\n'
         f'. {bundle_quote}/tools/session-theme.sh\nexec {bundle_quote}/shell/xpwm-screenshot "$@"\n').encode()
-    def desktop_exec(path):
-        return '"' + str(path).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%') + '"'
-    result[Path('share/wayland-sessions/xpwm.desktop')] = (
-        '[Desktop Entry]\nName=XPWm\nComment=Windows XP-inspired Wayland desktop built on dwl\n'
-        f'Exec={desktop_exec(prefix / "bin/xpwm")} tty\nType=Application\n').encode()
+    result[Path('share/wayland-sessions/xpwm.desktop')] = session_entry(prefix)
     result[Path('share/applications/xpwm-theme-preview.desktop')] = (
         '[Desktop Entry]\nType=Application\nName=Luna Theme Preview\n'
         f'Exec={desktop_exec(prefix / "bin/xpwm-theme-preview")}\nCategories=Settings;\nTerminal=false\n').encode()
@@ -179,6 +191,38 @@ def deploy(prefix, destdir=None):
     print(f'Installed {len(files)} files under {root}')
 
 
+
+def repair_session_entry(prefix, destdir=None):
+    """Repair only the installed session metadata, without rebuilding/restarting."""
+    command = str(prefix / 'bin/xpwm')
+    if not all(c.isascii() and (c.isalnum() or c in '/._-') for c in command):
+        raise ValueError('For SDDM, use an installation prefix without spaces or reserved characters.')
+    root = destination(prefix, destdir)
+    relative = Path('share/wayland-sessions/xpwm.desktop')
+    target = safe_target(root, relative)
+    manifest = safe_target(root, MANIFEST)
+    if not manifest.is_file() or not target.is_file():
+        raise ValueError('No managed XPWm session entry to repair; run the installer first.')
+    report = json.loads(manifest.read_text())
+    recorded = report.get('files', {}).get(str(relative))
+    if not recorded:
+        raise ValueError('The session entry is not recorded by this installer.')
+    content = target.read_bytes()
+    updated = session_entry(prefix)
+    if hashlib.sha256(content).hexdigest() != recorded and content != updated:
+        raise ValueError('Session entry was modified; preserve it before repairing.')
+    launcher = safe_target(root, Path('bin/xpwm'))
+    if not launcher.is_file() or not os.access(launcher, os.X_OK):
+        raise ValueError(f'The XPWm launcher is missing or not executable: {launcher}')
+    temporary = target.with_name(target.name + '.xpwm-new')
+    with temporary.open('xb') as stream: stream.write(updated)
+    temporary.chmod(0o644)
+    temporary.replace(target)
+    report['files'][str(relative)] = hashlib.sha256(updated).hexdigest()
+    manifest.write_text(json.dumps(report, indent=2) + '\n')
+    print(f'Repaired SDDM session entry: {target}. No session was restarted.')
+
+
 def uninstall(prefix, destdir=None):
     root = destination(prefix, destdir)
     manifest = safe_target(root, MANIFEST)
@@ -224,6 +268,7 @@ def main(argv=None):
     parser.add_argument('--deps', action='store_true', help='Install build/runtime dependencies using the distro package manager')
     parser.add_argument('--package-manager', choices=('pacman', 'apt', 'dnf', 'zypper'), help='Override distro detection for --deps')
     parser.add_argument('--no-build', action='store_true', help='Install previously built binaries')
+    parser.add_argument('--repair-session-entry', action='store_true', help='Repair an existing managed SDDM session entry without rebuilding or restarting')
     parser.add_argument('--uninstall', action='store_true', help='Remove files recorded by this installer')
     parser.add_argument('--dry-run', action='store_true', help='Print the plan without building, installing packages, or writing files')
     args = parser.parse_args(argv)
@@ -235,20 +280,22 @@ def main(argv=None):
             raise ValueError('Prefix must be an absolute directory other than /.')
         prefix = Path(os.path.abspath(prefix))
         destdir = args.destdir.expanduser().absolute() if args.destdir else None
+        if args.repair_session_entry and (args.deps or args.uninstall): raise ValueError('--repair-session-entry cannot be combined with --deps or --uninstall.')
         if args.uninstall and args.deps: raise ValueError('--uninstall and --deps cannot be combined.')
         if args.deps:
             manager = args.package_manager or manager_for(Path('/etc/os-release').read_text())
             run(dependency_command(manager), dry=args.dry_run, privileged=True)
         print(f'{"Uninstall" if args.uninstall else "Install"} prefix: {prefix}')
         if destdir: print(f'Packaging destination: {destination(prefix, destdir)}')
-        if not args.uninstall:
+        if not args.uninstall and not args.repair_session_entry:
             if not args.dry_run and not args.no_build: check_dependencies()
             if not args.no_build:
                 # Building C code must not run the private-media asset generators.
                 run(['make', '-C', str(ROOT / 'compositor')], dry=args.dry_run)
                 run(['make', '-C', str(ROOT / 'shell')], dry=args.dry_run)
         if args.dry_run:
-            print('Would remove manifest-owned files.' if args.uninstall else
+            print('Would repair only the managed SDDM session entry.' if args.repair_session_entry else
+                  'Would remove manifest-owned files.' if args.uninstall else
                   'Would install the compositor, shell, source-only theme, import tools, launchers and session entry.')
             return 0
         target = destination(prefix, destdir)
@@ -256,16 +303,21 @@ def main(argv=None):
         while not parent.exists(): parent = parent.parent
         if args.system and not destdir and os.geteuid() != 0 and not os.access(parent, os.W_OK):
             command = [sys.executable, str(Path(__file__).resolve()), '--system', '--prefix', str(prefix), '--no-build']
+            if args.repair_session_entry: command.append('--repair-session-entry')
             if args.uninstall: command.append('--uninstall')
             run(command, privileged=True)
             return 0
-        if args.uninstall:
+        if args.repair_session_entry:
+            repair_session_entry(prefix, destdir)
+        elif args.uninstall:
             uninstall(prefix, destdir)
         else:
             deploy(prefix, destdir)
             print(f'Launch from a TTY: {shlex.quote(str(prefix / "bin/xpwm"))} tty')
             print('Launch nested: xpwm nested (inside an existing Wayland session).')
             print('Import optional XP media: xpwm-import-assets /path/to/windows-xp-sp3-x86.iso')
+            if any(c.isspace() for c in str(prefix)):
+                print('SDDM cannot reliably launch session Exec paths containing spaces; use a standard system prefix for SDDM, or launch xpwm from a TTY.')
             print('Ensure the prefix bin directory is on PATH. Some display managers only read /usr/share/wayland-sessions; use --system --prefix /usr for those.')
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError, KeyError) as error:

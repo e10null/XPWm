@@ -27,8 +27,9 @@ static void buffer_info(void *data,struct zwlr_screencopy_frame_v1 *frame,uint32
 {
  Capture *c=data;int fd;char *path=NULL;
  c->width=w;c->height=h;c->stride=stride;c->format=format;
- if(!w || !h || w>16384 || h>16384 || stride<(uint64_t)w*4 || (uint64_t)stride*h>512*1024*1024 ||
-  (format!=WL_SHM_FORMAT_XRGB8888 && format!=WL_SHM_FORMAT_ARGB8888 && format!=WL_SHM_FORMAT_XBGR8888 && format!=WL_SHM_FORMAT_ABGR8888))goto fail;
+ gboolean packed24=format==WL_SHM_FORMAT_RGB888 || format==WL_SHM_FORMAT_BGR888;
+ if(!w || !h || w>16384 || h>16384 || stride<(uint64_t)w*(packed24 ? 3 : 4) || (uint64_t)stride*h>512*1024*1024 ||
+  (!packed24 && format!=WL_SHM_FORMAT_XRGB8888 && format!=WL_SHM_FORMAT_ARGB8888 && format!=WL_SHM_FORMAT_XBGR8888 && format!=WL_SHM_FORMAT_ABGR8888))goto fail;
  c->size=(size_t)stride*h;fd=g_file_open_tmp("xpwm-capture-XXXXXX",&path,NULL);
  if(fd<0)goto fail;
  unlink(path);g_free(path);
@@ -82,10 +83,19 @@ static GdkPixbuf *capture_monitor(struct wl_display *display,struct wl_event_que
   image=gdk_pixbuf_new(GDK_COLORSPACE_RGB,FALSE,8,c.width,c.height);
   if(image)for(uint32_t y=0;y<c.height;y++) {
    uint32_t row=c.flags&ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT ? c.height-1-y : y;
-   const uint32_t *src=(const uint32_t *)((char *)c.pixels+(size_t)row*c.stride);
+   const guchar *bytes=(const guchar *)c.pixels+(size_t)row*c.stride;
+   const uint32_t *src=(const uint32_t *)bytes;
    guchar *dst=gdk_pixbuf_get_pixels(image)+(size_t)y*gdk_pixbuf_get_rowstride(image);
    gboolean bgr=c.format==WL_SHM_FORMAT_XBGR8888 || c.format==WL_SHM_FORMAT_ABGR8888;
-   for(uint32_t x=0;x<c.width;x++){uint32_t v=src[x];dst[x*3]=bgr ? v&255 : (v>>16)&255;dst[x*3+1]=(v>>8)&255;dst[x*3+2]=bgr ? (v>>16)&255 : v&255;}
+   if(c.format==WL_SHM_FORMAT_RGB888 || c.format==WL_SHM_FORMAT_BGR888) {
+    /* Wayland packed formats describe components from high to low bits. */
+    gboolean rgb=c.format==WL_SHM_FORMAT_BGR888;
+    for(uint32_t x=0;x<c.width;x++) {
+     dst[x*3]=bytes[x*3+(rgb ? 0 : 2)];
+     dst[x*3+1]=bytes[x*3+1];
+     dst[x*3+2]=bytes[x*3+(rgb ? 2 : 0)];
+    }
+   } else for(uint32_t x=0;x<c.width;x++){uint32_t v=src[x];dst[x*3]=bgr ? v&255 : (v>>16)&255;dst[x*3+1]=(v>>8)&255;dst[x*3+2]=bgr ? (v>>16)&255 : v&255;}
   }
  }
  zwlr_screencopy_frame_v1_destroy(frame);

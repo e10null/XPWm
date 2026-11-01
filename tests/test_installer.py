@@ -74,6 +74,63 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Unsafe'): installer.uninstall(prefix)
             self.assertTrue(manifest.is_file())
 
+    def test_sddm_session_command_executes_without_literal_quotes(self):
+        with tempfile.TemporaryDirectory(prefix='xpwm-sddm-') as directory:
+            prefix = Path(directory)
+            launcher = prefix / 'bin/xpwm'
+            launcher.parent.mkdir()
+            launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            launcher.chmod(0o755)
+            # Only generated launcher metadata is relevant; no built binaries
+            # or Windows resources are needed for this regression.
+            with patch.object(Path, 'read_bytes', return_value=b'fixture'):
+                files = installer.installed_files(prefix)
+            desktop = files[Path('share/wayland-sessions/xpwm.desktop')].decode()
+            command = next(line[5:] for line in desktop.splitlines() if line.startswith('Exec='))
+            self.assertEqual(command, str(launcher) + ' tty')
+            # Match /usr/share/sddm/scripts/wayland-session's exec $@ behavior:
+            # quotes in the input value are literal, not shell syntax.
+            result = subprocess.run(['/bin/sh', '-c', 'exec $@', 'sddm-fixture', command],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'tty')
+            old = subprocess.run(['/bin/sh', '-c', 'exec $@', 'sddm-fixture',
+                                  '"' + str(launcher) + '" tty'], capture_output=True, text=True)
+            self.assertNotEqual(old.returncode, 0)
+
+    def test_session_repair_updates_manifest_and_preserves_other_files(self):
+        import hashlib
+        with tempfile.TemporaryDirectory(prefix='xpwm-repair-') as directory:
+            prefix = Path(directory)
+            name = Path('share/wayland-sessions/xpwm.desktop')
+            legacy = installer.session_entry(prefix).replace(
+                ('Exec=' + str(prefix / 'bin/xpwm') + ' tty').encode(),
+                ('Exec="' + str(prefix / 'bin/xpwm') + '" tty').encode())
+            files = {Path('bin/xpwm'): b'#!/bin/sh\nexit 0\n', name: legacy,
+                     Path('lib/xpwm/test'): b'keep runtime'}
+            with patch.object(installer, 'installed_files', return_value=files):
+                installer.deploy(prefix)
+            before = json.loads((prefix / installer.MANIFEST).read_text())
+            installer.repair_session_entry(prefix)
+            after = json.loads((prefix / installer.MANIFEST).read_text())
+            self.assertEqual((prefix / name).read_bytes(), installer.session_entry(prefix))
+            self.assertEqual(after['files'][str(name)],
+                hashlib.sha256(installer.session_entry(prefix)).hexdigest())
+            for path in ('bin/xpwm', 'lib/xpwm/test'):
+                self.assertEqual(after['files'][path], before['files'][path])
+                self.assertEqual((prefix / path).read_bytes(), files[Path(path)])
+            installer.repair_session_entry(prefix)  # Safe to repeat.
+            (prefix / name).write_text('user edited entry')
+            with self.assertRaisesRegex(ValueError, 'modified'):
+                installer.repair_session_entry(prefix)
+
+    def test_application_launchers_keep_quoting_for_spaces(self):
+        prefix = Path('/tmp/XPWm prefix with spaces')
+        with patch.object(Path, 'read_bytes', return_value=b'fixture'):
+            files = installer.installed_files(prefix)
+        desktop = files[Path('share/applications/xpwm-theme-preview.desktop')].decode()
+        self.assertIn('Exec="/tmp/XPWm prefix with spaces/bin/xpwm-theme-preview"', desktop)
+
     def test_dry_run_is_side_effect_free(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'not-created'

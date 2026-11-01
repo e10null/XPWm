@@ -93,6 +93,23 @@ separately installed `dwl` executable. Log out and select **XPWm** in your displ
 manager. Seat/device access still needs the normal logind or seatd setup for your
 system; the installer does not change groups, services or authentication.
 
+If XPWm appears in SDDM but immediately returns to the login screen, inspect
+`~/.local/share/sddm/wayland-session.log` and
+`~/.local/state/xpwm/session.log`. An error mentioning a path such as
+`\"/usr/local/bin/xpwm\"` indicates a stale quoted session `Exec` entry.
+Repair the existing system entry from this checkout with:
+
+```sh
+./install.sh --system --prefix /usr/local --repair-session-entry
+```
+
+Use the prefix of your installed copy (`/usr` if installed there). This requests
+sudo only when necessary and updates the session entry and its manifest hash,
+without rebuilding programs or restarting the display manager. SDDM's session wrapper treats those
+quotes literally. Use an installation prefix without spaces for SDDM; application
+launchers still support prefixes containing spaces. There is no need to restart
+SDDM while another desktop session is running.
+
 The public installation includes fallback artwork. To use locally extracted XP
 assets, install the [ISO importer requirements](tools/README.md#one-command-iso-import),
 then run:
